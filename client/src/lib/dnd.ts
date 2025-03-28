@@ -68,7 +68,7 @@ export function useDndSorting(
         position: targetPosition,
       });
       
-      // If there's a participant at the target position, swap positions
+      // If there's a participant at the target position, swap positions test
       if (targetParticipant) {
         positionUpdates.push({
           userId: targetParticipant.userId,
