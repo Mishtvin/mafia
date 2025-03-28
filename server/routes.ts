@@ -137,11 +137,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
         currentRoomToken = roomToken;
         currentUserId = userId;
         
-        roomLogger.log(`User joining room via joinRoom`, { 
+        roomLogger.log(`User joining room via joinRoom event`, { 
           userId, 
           nickname, 
           roomToken,
-          socketId: socket.id
+          socketId: socket.id,
+          hasCallback: typeof callback === 'function'
         });
         
         // Socket.IO join room
@@ -163,7 +164,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
         // Get room
         const room = await storage.getRoom(roomToken);
         if (!room) {
+          roomLogger.log(`Room not found: ${roomToken}`);
           socket.emit('error', { message: 'Room not found' });
+          if (typeof callback === 'function') {
+            callback({ success: false, error: 'Room not found' });
+          }
           return;
         }
         
@@ -177,6 +182,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         
         if (position >= 12) {
           socket.emit('error', { message: 'Room is full' });
+          if (typeof callback === 'function') {
+            callback({ success: false, error: 'Room is full' });
+          }
           return;
         }
         
@@ -238,8 +246,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
         
         // Call the callback if provided to acknowledge success
         if (typeof callback === 'function') {
-          roomLogger.log('Sending joinRoom callback confirmation');
+          roomLogger.log('Sending joinRoom callback confirmation for user', { userId, socketId: socket.id });
           callback({ success: true });
+        } else {
+          roomLogger.log('No callback function provided for joinRoom event', { userId, socketId: socket.id });
+          // Fallback for older clients that might be using emit/on pattern
+          socket.emit('joinRoomResponse', { success: true });
         }
       } catch (error) {
         logError('Error joining room', error);

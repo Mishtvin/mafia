@@ -149,23 +149,13 @@ export function registerSignalingEvents(io: SocketIOServer, socket: Socket): voi
   socket.on('get-rtp-capabilities', (request: GetRtpCapabilitiesRequest, callback) => {
     try {
       // Log details for debugging
-      signalingLogger.log(`Get RTP capabilities request: ${JSON.stringify(request)}`);
-      signalingLogger.log(`Current participantId: ${participantId}`);
+      signalingLogger.log(`Received RTP capabilities request for user ${request.userId}`, request, true);
       
-      // Temporarily disable ID check for debugging
-      // if (request.userId !== participantId) {
-      //   throw new Error('User ID mismatch');
-      // }
-      
-      // Set participantId if not already set (for robustness)
-      if (!participantId) {
-        participantId = request.userId;
-        signalingLogger.log(`Setting participantId to ${participantId} from get-rtp-capabilities request`);
-      }
-
+      // Get router capabilities
       const rtpCapabilities = getRouterRtpCapabilities();
-      signalingLogger.log(`Sending RTP capabilities to ${request.userId}`);
+      signalingLogger.log(`Sending RTP capabilities:`, { success: true, userId: request.userId }, true);
       
+      // Return capabilities
       callback({
         success: true,
         rtpCapabilities
