@@ -239,6 +239,114 @@ export function useMediasoupClient(): MediasoupResult {
     }
   }, [state.device]);
   
+  // Create a local transport and connect it to the server
+  // This will allow us to send media to the server
+  const createSendTransport = useCallback(async () => {
+    if (!state.device?.loaded || !socketRef.current) {
+      debug('transport', 'Cannot create send transport: device not loaded or socket not connected');
+      return null;
+    }
+    
+    // Already have a producer transport
+    if (state.producerTransport) {
+      debug('transport', 'Producer transport already exists, reusing');
+      return state.producerTransport;
+    }
+    
+    debug('transport', 'Requesting WebRTC parameters for send transport');
+    
+    // Get transport parameters from the server
+    return new Promise<any>((resolve) => {
+      if (!socketRef.current) {
+        debug('transport', 'Socket not connected, cannot create send transport');
+        resolve(null);
+        return;
+      }
+      
+      socketRef.current.emit('create-producer-transport', {
+        userId: userIdRef.current
+      }, async (response: any) => {
+        try {
+          debug('transport', 'Received transport parameters', response);
+          
+          if (!response || !response.success) {
+            debug('transport', 'Failed to create producer transport', response?.error || 'Unknown error');
+            setState(prev => ({ ...prev, error: 'Failed to create video transport' }));
+            resolve(null);
+            return;
+          }
+          
+          // Create a new transport using the parameters from the server
+          const transport = state.device!.createSendTransport({
+            id: response.transport.id,
+            iceParameters: response.transport.iceParameters,
+            iceCandidates: response.transport.iceCandidates,
+            dtlsParameters: response.transport.dtlsParameters,
+            sctpParameters: response.transport.sctpParameters,
+          });
+          
+          debug('transport', `Send transport created with ID: ${transport.id}`);
+          
+          // Set up listeners for transport events
+          transport.on('connect', ({ dtlsParameters }, callback, errback) => {
+            debug('transport', 'Send transport connect event triggered');
+            socketRef.current?.emit('connect-producer-transport', {
+              userId: userIdRef.current,
+              transportId: transport.id,
+              dtlsParameters
+            }, (response: any) => {
+              if (response && response.success) {
+                debug('transport', 'Producer transport connected successfully');
+                callback();
+              } else {
+                debug('transport', 'Failed to connect producer transport', response?.error || 'Unknown error');
+                errback(new Error('Failed to connect transport'));
+              }
+            });
+          });
+          
+          transport.on('produce', ({ kind, rtpParameters, appData }, callback, errback) => {
+            debug('transport', `Produce event triggered. Kind: ${kind}`);
+            socketRef.current?.emit('produce', {
+              userId: userIdRef.current,
+              transportId: transport.id,
+              kind,
+              rtpParameters,
+              appData
+            }, (response: any) => {
+              if (response && response.success) {
+                debug('transport', `Producer created successfully with ID: ${response.producerId}`);
+                callback({ id: response.producerId });
+              } else {
+                debug('transport', 'Failed to create producer', response?.error || 'Unknown error');
+                errback(new Error('Failed to create producer'));
+              }
+            });
+          });
+          
+          transport.on('connectionstatechange', (state) => {
+            debug('transport', `Producer transport connection state changed to: ${state}`);
+            // If the transport closes or fails, set state
+            if (state === 'failed' || state === 'closed') {
+              debug('transport', 'Producer transport failed or closed');
+              setState(prev => ({ ...prev, error: 'Video connection failed' }));
+            }
+          });
+          
+          // Set current state
+          setState(prev => ({ ...prev, producerTransport: transport }));
+          
+          // Resolve with the created transport
+          resolve(transport);
+        } catch (error) {
+          debug('transport', 'Error creating send transport', error);
+          setState(prev => ({ ...prev, error: 'Failed to setup video transport' }));
+          resolve(null);
+        }
+      });
+    });
+  }, [state.device, state.producerTransport, userIdRef]);
+  
   // Start local video with retry mechanism and better error handling
   const startLocalVideo = useCallback(async () => {
     // Check prerequisites
@@ -248,348 +356,95 @@ export function useMediasoupClient(): MediasoupResult {
       return;
     }
     
-    // Stop existing tracks if any
-    if (localStream) {
-      debug('video', 'Stopping existing local stream tracks');
-      localStream.getTracks().forEach(track => {
-        debug('video', `Stopping track: ${track.kind}, ID: ${track.id}`);
-        track.stop();
-      });
-    }
+    debug('video', 'Starting local video with full debugging');
     
-    // If device not loaded, try loading it first with configurable retries
-    let deviceLoadingAttempts = 0;
-    const MAX_DEVICE_LOADING_ATTEMPTS = 3;
-    
-    const loadMediasoupDevice = async (): Promise<boolean> => {
-      if (state.device?.loaded) {
-        debug('device', 'MediaSoup device already loaded');
-        return true;
-      }
-      
-      if (deviceLoadingAttempts >= MAX_DEVICE_LOADING_ATTEMPTS) {
-        debug('device', `Max device loading attempts (${MAX_DEVICE_LOADING_ATTEMPTS}) reached`);
-        return false;
-      }
-      
-      try {
-        deviceLoadingAttempts++;
-        debug('device', `Loading MediaSoup device (attempt ${deviceLoadingAttempts}/${MAX_DEVICE_LOADING_ATTEMPTS})...`);
-        
-        // Ensure we're registered in the room first
-        if (!state.connected) {
-          debug('socket', 'Re-joining room to establish connection');
-          
-          return new Promise<boolean>((resolve) => {
-            if (!socketRef.current || !userIdRef.current || !nicknameRef.current) {
-              debug('socket', 'Missing socket or user details for rejoining');
-              resolve(false);
-              return;
-            }
-            
-            socketRef.current.emit('join-room', { 
-              userId: userIdRef.current, 
-              nickname: nicknameRef.current || `User-${userIdRef.current.substring(0, 5)}` 
-            }, (joinResponse: any) => {
-              debug('socket', 'Room re-join response:', joinResponse);
-              
-              if (!joinResponse.success) {
-                debug('socket', 'Failed to re-join room');
-                resolve(false);
-                return;
-              }
-              
-              // Now request RTP capabilities
-              if (!socketRef.current) {
-                debug('socket', 'Socket disconnected during device loading');
-                resolve(false);
-                return;
-              }
-              
-              socketRef.current.emit('get-rtp-capabilities', { userId: userIdRef.current }, async (response: any) => {
-                debug('device', 'RTP capabilities response:', response);
-                
-                if (!response?.success) {
-                  debug('device', 'Failed to get RTP capabilities:', response?.error || 'Unknown error');
-                  resolve(false);
-                  return;
-                }
-                
-                try {
-                  if (!state.device) {
-                    debug('device', 'Creating new MediaSoup device');
-                    const newDevice = new Device();
-                    
-                    debug('device', 'Loading device with RTP capabilities');
-                    await newDevice.load({ routerRtpCapabilities: response.rtpCapabilities });
-                    
-                    debug('device', 'Device loaded successfully, updating state');
-                    setState(prev => ({ ...prev, device: newDevice, connected: true }));
-                  } else {
-                    debug('device', 'Loading existing MediaSoup device with RTP capabilities');
-                    await state.device.load({ routerRtpCapabilities: response.rtpCapabilities });
-                    debug('device', 'Existing device loaded successfully');
-                    setState(prev => ({ ...prev, connected: true }));
-                  }
-                  
-                  debug('device', 'Device loading successful');
-                  resolve(true);
-                } catch (error) {
-                  debug('device', 'Error loading device:', error);
-                  resolve(false);
-                }
-              });
-            });
-          });
-        } else {
-          // If already connected, just load device
-          return new Promise<boolean>((resolve) => {
-            if (!socketRef.current || !userIdRef.current) {
-              debug('socket', 'Socket not connected for device loading');
-              resolve(false);
-              return;
-            }
-            
-            socketRef.current.emit('get-rtp-capabilities', { userId: userIdRef.current }, async (response: any) => {
-              debug('device', 'RTP capabilities response:', response);
-              
-              if (!response?.success) {
-                debug('device', 'Failed to get RTP capabilities:', response?.error || 'Unknown error');
-                resolve(false);
-                return;
-              }
-              
-              try {
-                if (!state.device) {
-                  debug('device', 'Creating new MediaSoup device');
-                  const newDevice = new Device();
-                  
-                  debug('device', 'Loading device with RTP capabilities');
-                  await newDevice.load({ routerRtpCapabilities: response.rtpCapabilities });
-                  
-                  debug('device', 'Device loaded successfully, updating state');
-                  setState(prev => ({ ...prev, device: newDevice, connected: true }));
-                } else {
-                  debug('device', 'Loading existing MediaSoup device with RTP capabilities');
-                  await state.device.load({ routerRtpCapabilities: response.rtpCapabilities });
-                  debug('device', 'Existing device loaded successfully');
-                  setState(prev => ({ ...prev, connected: true }));
-                }
-                
-                debug('device', 'Device loading successful');
-                resolve(true);
-              } catch (error) {
-                debug('device', 'Error loading device:', error);
-                resolve(false);
-              }
-            });
-          });
-        }
-      } catch (error) {
-        debug('device', 'Exception during device loading:', error);
-        return false;
-      }
-    };
-    
-    // Try to load the device if needed
-    if (!state.device?.loaded) {
-      const deviceLoaded = await loadMediasoupDevice();
-      if (!deviceLoaded) {
-        debug('device', 'Failed to load MediaSoup device after multiple attempts');
-        setState(prev => ({ ...prev, error: 'Device initialization failed' }));
-        return;
-      }
-    }
-    
-    // Now try to access the camera
     try {
-      debug('video', 'Attempting to access camera...');
+      // 1. Stop existing tracks if any
+      if (localStream) {
+        debug('video', 'Stopping existing local stream tracks');
+        localStream.getTracks().forEach(track => {
+          debug('video', `Stopping track: ${track.kind}, ID: ${track.id}`);
+          track.stop();
+        });
+      }
       
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: {
-          width: { ideal: 1280 },
-          height: { ideal: 720 },
-          frameRate: { ideal: 30 }
+      // 2. Get user media with more robust error handling
+      debug('video', 'Requesting user media...');
+      const stream = await navigator.mediaDevices.getUserMedia({ 
+        video: true,
+        audio: false
+      });
+      
+      debug('video', `User media obtained with ${stream.getVideoTracks().length} video tracks`);
+      
+      // Store the local stream
+      setLocalStream(stream);
+      
+      // 3. Create the send transport if needed
+      debug('video', 'Creating send transport...');
+      const transport = await createSendTransport();
+      
+      if (!transport) {
+        throw new Error('Failed to create send transport');
+      }
+      
+      debug('video', 'Send transport created, producing video...');
+      
+      // 4. Create a producer with the first video track
+      const track = stream.getVideoTracks()[0];
+      
+      if (!track) {
+        throw new Error('No video track found in stream');
+      }
+      
+      debug('video', `Producing track: ${track.kind}, ID: ${track.id}, Label: ${track.label}`);
+      
+      const producer = await transport.produce({
+        track,
+        encodings: [
+          { maxBitrate: 100000, scaleResolutionDownBy: 4 },
+          { maxBitrate: 300000, scaleResolutionDownBy: 2 },
+          { maxBitrate: 900000 }
+        ],
+        codecOptions: {
+          videoGoogleStartBitrate: 1000
         }
       });
       
-      debug('video', `Camera accessed successfully, stream ID: ${stream.id}`);
+      debug('video', `Producer created with ID: ${producer.id}`);
       
-      // Log video track details for debugging
-      const videoTrack = stream.getVideoTracks()[0];
-      if (videoTrack) {
-        debug('video', 'Video track settings:', videoTrack.getSettings());
-      }
+      // Store the producer in state
+      setState(prev => ({ ...prev, producer, isProducing: true }));
       
-      // Update state with new stream
-      setLocalStream(stream);
-      setLocalVideo(true);
+      // 5. Notify the server that the local video is now enabled
+      socketRef.current.emit('update-video-status', {
+        userId: userIdRef.current,
+        hasVideo: true
+      }, (response: any) => {
+        debug('video', 'Video status update response:', response);
+      });
       
-      // Create send transport if needed
-      if (!state.producerTransport) {
-        debug('transport', 'Creating new send transport');
-        
-        if (!socketRef.current || !userIdRef.current) {
-          debug('transport', 'Socket not connected for transport creation');
-          setState(prev => ({ ...prev, error: 'Connection lost while setting up video' }));
-          return;
-        }
-        
-        socketRef.current.emit('create-transport', { 
-          userId: userIdRef.current, 
-          direction: 'send' 
-        }, async (response: any) => {
-          debug('transport', 'Create send transport response:', response);
-          
-          if (!response.success) {
-            debug('transport', 'Error creating send transport:', response.error);
-            setState(prev => ({ ...prev, error: `Transport creation failed: ${response.error}` }));
-            return;
-          }
-          
-          if (!state.device) {
-            debug('transport', 'No device available to create transport');
-            setState(prev => ({ ...prev, error: 'Device not initialized' }));
-            return;
-          }
-          
-          debug('transport', 'Creating send transport with parameters:', response.transport);
-          const transport = state.device.createSendTransport(response.transport);
-          
-          if (!transport) {
-            debug('transport', 'Failed to create send transport - device returned null');
-            setState(prev => ({ ...prev, error: 'Transport creation failed' }));
-            return;
-          }
-          
-          // Set up transport events with better error handling
-          transport.on('connect', ({ dtlsParameters }: any, callback: Function) => {
-            debug('transport', 'Send transport connect event fired with dtlsParameters:', dtlsParameters);
-            
-            if (!socketRef.current || !userIdRef.current) {
-              debug('transport', 'Socket disconnected during transport connection');
-              setState(prev => ({ ...prev, error: 'Connection lost during setup' }));
-              return;
-            }
-            
-            debug('transport', 'Sending connect-transport request');
-            socketRef.current.emit('connect-transport', {
-              userId: userIdRef.current,
-              transportId: transport.id,
-              direction: 'send',
-              dtlsParameters
-            }, (response: any) => {
-              debug('transport', 'Connect send transport response:', response);
-              
-              if (response.success) {
-                debug('transport', 'Send transport connected successfully, calling callback');
-                callback();
-              } else {
-                debug('transport', 'Failed to connect send transport:', response.error);
-                setState(prev => ({ ...prev, error: `Transport connection failed: ${response.error}` }));
-              }
-            });
-          });
-          
-          transport.on('produce', async ({ kind, rtpParameters }: any, callback: Function) => {
-            debug('transport', `Produce event fired with kind: ${kind}`);
-            debug('transport', 'RTP parameters:', rtpParameters);
-            
-            if (!socketRef.current || !userIdRef.current) {
-              debug('transport', 'Socket disconnected during produce');
-              setState(prev => ({ ...prev, error: 'Connection lost during video setup' }));
-              return;
-            }
-            
-            debug('transport', 'Sending produce request');
-            socketRef.current.emit('produce', {
-              userId: userIdRef.current,
-              transportId: transport.id,
-              kind,
-              rtpParameters
-            }, (response: any) => {
-              debug('transport', 'Produce response:', response);
-              
-              if (response.success) {
-                debug('transport', `Producer created with ID: ${response.producerId}`);
-                callback({ id: response.producerId });
-              } else {
-                debug('transport', 'Failed to produce:', response.error);
-                setState(prev => ({ ...prev, error: `Video production failed: ${response.error}` }));
-              }
-            });
-          });
-          
-          // Store transport in state
-          debug('transport', 'Storing producer transport in state');
-          setState(prev => ({ ...prev, producerTransport: transport }));
-          
-          try {
-            // Get video track and create producer
-            const track = stream.getVideoTracks()[0];
-            if (!track) {
-              debug('producer', 'No video track available');
-              setState(prev => ({ ...prev, error: 'No video track available' }));
-              return;
-            }
-            
-            debug('producer', 'Creating producer with video track');
-            const producer = await transport.produce({ track });
-            debug('producer', `Producer created with ID: ${producer.id}`);
-            
-            setState(prev => ({ 
-              ...prev, 
-              producer, 
-              isProducing: true,
-              error: null // Clear any previous errors
-            }));
-            
-            debug('producer', 'Local video producer created successfully');
-          } catch (error) {
-            debug('producer', 'Error creating producer:', error);
-            setState(prev => ({ ...prev, error: `Producer creation failed: ${error}` }));
-          }
-        });
-      } else if (state.producerTransport && !state.isProducing) {
-        // Reuse existing transport if available but not producing
-        debug('producer', 'Reusing existing transport to create producer');
-        
-        try {
-          const track = stream.getVideoTracks()[0];
-          if (!track) {
-            debug('producer', 'No video track available for existing transport');
-            setState(prev => ({ ...prev, error: 'No video track available' }));
-            return;
-          }
-          
-          debug('producer', 'Creating producer with existing transport');
-          const producer = await state.producerTransport.produce({ track });
-          
-          debug('producer', `Producer created with existing transport, ID: ${producer.id}`);
-          
-          setState(prev => ({ 
-            ...prev, 
-            producer, 
-            isProducing: true,
-            error: null // Clear any previous errors
-          }));
-          
-          debug('producer', 'Local video producer created successfully with existing transport');
-        } catch (error) {
-          debug('producer', 'Error creating producer with existing transport:', error);
-          setState(prev => ({ ...prev, error: `Producer creation failed: ${error}` }));
-        }
-      } else {
-        debug('producer', 'Already producing video, no need to recreate producer');
-      }
+      debug('video', 'Local video started successfully');
     } catch (error) {
-      debug('video', 'Error accessing camera or starting local video:', error);
-      setState(prev => ({ 
-        ...prev, 
-        error: `Camera access failed: ${error instanceof Error ? error.message : String(error)}` 
-      }));
+      console.error('Error starting local video:', error);
+      debug('video', 'Failed to start local video', error);
+      
+      // Handle common camera access errors with user-friendly messages
+      let errorMessage = 'Failed to access camera';
+      
+      if (error instanceof DOMException) {
+        if (error.name === 'NotFoundError') {
+          errorMessage = 'No camera found. Please connect a camera.';
+        } else if (error.name === 'NotAllowedError') {
+          errorMessage = 'Camera access denied. Please allow camera access in your browser.';
+        } else if (error.name === 'AbortError') {
+          errorMessage = 'Camera is being used by another application.';
+        }
+      }
+      
+      setState(prev => ({ ...prev, error: errorMessage }));
     }
-  }, [state.device, state.producerTransport, state.isProducing, state.connected, localStream]);
+  }, [socketRef.current, userIdRef.current, localStream, createSendTransport]);
   
   // Stop local video
   const stopLocalVideo = useCallback(() => {
