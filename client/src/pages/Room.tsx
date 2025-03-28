@@ -5,7 +5,7 @@ import { RoomSidebar } from "@/components/RoomSidebar";
 import { VideoGrid } from "@/components/VideoGrid";
 import { useRoomContext } from "@/context/RoomContext";
 import { useSocketIO } from "@/hooks/useSocketIO";
-// Import the new server-side streaming hook instead of WebRTC p2p
+// Import the server-side streaming hook
 import { useServerVideoStream } from "@/hooks/useServerVideoStream";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -23,7 +23,6 @@ export default function Room() {
   } = useRoomContext();
   const [showNicknameForm, setShowNicknameForm] = useState(true);
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
-  const [hasVideo, setHasVideo] = useState(true);
 
   // Setup Socket.IO connection
   const { 
@@ -40,7 +39,8 @@ export default function Room() {
     selectedDeviceId,
     toggleVideo,
     switchCamera,
-    getParticipantsWithStreams
+    getParticipantsWithStreams,
+    hasVideoEnabled
   } = useServerVideoStream(token, userId);
   
   // Get participants with streams 
@@ -145,7 +145,7 @@ export default function Room() {
         updatedParticipants.push({
           ...localParticipant,
           stream: localStream || undefined,
-          hasVideo: !!localStream
+          hasVideo: hasVideoEnabled
         });
       }
       
@@ -156,7 +156,7 @@ export default function Room() {
           userId,
           nickname,
           position: updatedParticipants.length, // Add at the end
-          hasVideo: !!localStream,
+          hasVideo: hasVideoEnabled,
           stream: localStream || undefined
         });
       }
@@ -171,7 +171,13 @@ export default function Room() {
           if (p.userId === userId) {
             localUserFound = true;
             console.log(`[DEBUG ROOM] Updating stream for ${p.nickname} (local user)`);
-            return { ...p, stream: localStream, hasVideo: true };
+            return { 
+              ...p, 
+              stream: localStream, 
+              hasVideo: hasVideoEnabled,
+              streamActive: hasVideoEnabled,
+              hasStream: true
+            };
           }
           return p;
         });
@@ -183,8 +189,10 @@ export default function Room() {
             userId,
             nickname,
             position: updatedParticipants.length, // Add at the end
-            hasVideo: true,
-            stream: localStream
+            hasVideo: hasVideoEnabled,
+            stream: localStream,
+            streamActive: hasVideoEnabled,
+            hasStream: true
           });
         }
       }
@@ -194,8 +202,8 @@ export default function Room() {
         nickname: p.nickname,
         hasVideo: p.hasVideo,
         hasStream: !!p.stream,
-        streamActive: p.stream?.active,
-        streamTracks: p.stream?.getTracks().length
+        streamActive: p.streamActive,
+        streamTracks: p.stream?.getTracks().length || 0
       })));
       
       // Only update if we have participants to show
@@ -206,19 +214,13 @@ export default function Room() {
         });
       }
     }
-  }, [participantsWithStreams, localStream, token, userId, roomState, setRoomState, selectedDeviceId, nickname]);
+  }, [participantsWithStreams, localStream, token, userId, roomState, setRoomState, selectedDeviceId, nickname, hasVideoEnabled]);
 
   // Handle video toggle
   const handleToggleVideo = useCallback(() => {
-    const newHasVideo = !hasVideo;
-    setHasVideo(newHasVideo);
-    
-    // Toggle video stream
-    toggleVideo(newHasVideo);
-    
-    // Update server about video status
-    updateVideoStatus(userId, newHasVideo);
-  }, [hasVideo, toggleVideo, updateVideoStatus, userId]);
+    // Toggle video stream using the server-side stream toggle
+    toggleVideo(!hasVideoEnabled);
+  }, [hasVideoEnabled, toggleVideo]);
 
   // Handle leave room
   const handleLeaveRoom = useCallback(() => {
@@ -277,6 +279,12 @@ export default function Room() {
 
         {/* Video grid */}
         <main className="flex-1 overflow-auto p-4 bg-background">
+          {/* Server-side streaming notice */}
+          <div className="bg-blue-100 p-2 rounded mb-4 flex items-center text-blue-800 text-sm">
+            <span className="material-icons text-blue-600 mr-2">info</span>
+            <p>Using server-based streaming optimized for 12+ participants (🖥️ reduced server load)</p>
+          </div>
+
           {/* Controls */}
           <div className="flex flex-wrap justify-between items-center mb-4">
             {/* Camera selector */}
@@ -317,15 +325,15 @@ export default function Room() {
                 <span className="sm:hidden">Rearrange</span>
               </Button>
               <Button 
-                variant={hasVideo ? "default" : "destructive"}
+                variant={hasVideoEnabled ? "default" : "destructive"}
                 className="flex items-center" 
                 onClick={handleToggleVideo}
               >
                 <span className="material-icons mr-1">
-                  {hasVideo ? "videocam" : "videocam_off"}
+                  {hasVideoEnabled ? "videocam" : "videocam_off"}
                 </span>
-                <span className="hidden sm:inline">{hasVideo ? "Turn Off Camera" : "Turn On Camera"}</span>
-                <span className="sm:hidden">{hasVideo ? "Off" : "On"}</span>
+                <span className="hidden sm:inline">{hasVideoEnabled ? "Turn Off Camera" : "Turn On Camera"}</span>
+                <span className="sm:hidden">{hasVideoEnabled ? "Off" : "On"}</span>
               </Button>
             </div>
           </div>
