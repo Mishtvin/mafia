@@ -30,14 +30,17 @@ const logFile = path.join(logsDir, 'server.log');
 fs.writeFileSync(logFile, `=== Server Started ${new Date().toISOString()} ===\n`);
 
 // Internal logging function
-function _writeToLog(message: string, includeConsole = true) {
+// Reduce log verbosity in console by only showing a small percentage of logs
+// This helps keep the console clean while still logging everything to files
+function _writeToLog(message: string, includeConsole = false) {
   const timestamp = new Date().toISOString();
   const logMessage = `[${timestamp}] ${message}\n`;
   
   // Append to log file
   fs.appendFileSync(logFile, logMessage);
   
-  // Also log to console if requested
+  // Only log to console very selectively to reduce clutter
+  // We always write to log files, but console output is minimal
   if (includeConsole) {
     console.log(message);
   }
@@ -109,15 +112,18 @@ export function logError(message: string, error: Error | unknown) {
     }
   }
   
-  log('error', message, errorStr, true);
+  // Always show errors in console (true for includeConsole)
+  log('error', message, errorStr, true, true);
 }
 
 /**
  * Create a category-specific logger
  */
 export function createLogger(category: string) {
+  // Default console output to false for most messages - they'll still be written to log files
+  // Only errors will be shown in console to keep it clean
   return {
-    log: (message: string, data?: any, force = false) => log(category, message, data, force),
+    log: (message: string, data?: any, force = false) => log(category, message, data, force, false),
     error: (message: string, error: Error | unknown) => logError(`[${category}] ${message}`, error)
   };
 }

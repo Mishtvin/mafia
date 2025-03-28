@@ -1,0 +1,93 @@
+Refactor the current project by replacing the custom Socket.IO-based SFU (which transmits video as base64 images) with a proper WebRTC-based mediasoup implementation.
+There should be only one shared video room — no room creation or switching — and it must support up to 12 participants with video only (no audio).
+
+🔧 Changes Required:
+1. Remove the existing video streaming logic:
+Delete:
+
+All events like video:start, video:chunk, video:image
+
+VideoStreamManager and related classes
+
+Frame capturing using canvas.toDataURL() and base64 encoding
+
+Remove room creation logic. There should be no roomId or dynamic room handling anymore.
+
+2. Integrate mediasoup as the SFU:
+✅ Server (Node.js + TypeScript):
+Install and set up mediasoup.
+
+On server startup, create one persistent room instance (e.g., mafiaRoom).
+
+For each connected client:
+
+Create a WebRTC Transport
+
+Accept the client's Producer (video track)
+
+Create Consumers to forward other participants' video tracks
+
+Use Socket.IO or WebSocket as the signaling layer (exchange ICE, SDP, transport info, etc.).
+
+✅ Client (React + TypeScript):
+Always connect to the same predefined room (e.g., "mafia").
+
+Use getUserMedia() to access the user's camera.
+
+Create a sendTransport and publish the video Producer.
+
+Listen for and create recvTransport connections to consume other users' streams.
+
+Render video using <video> elements tied to MediaStream objects created from each Consumer.track.
+
+🏠 Shared Room Logic:
+The room is fixed — no need to create or join different rooms.
+
+Name: "mafia" (or just treat it as a singleton room object).
+
+All users connect to this same room upon page load.
+
+Server maintains:
+
+List of connected participants
+
+Each participant's Producer, Consumers, and Transports
+
+💡 Business Rules:
+Video only (no audio)
+
+Max 12 participants
+
+Good video quality (720p preferred)
+
+Low latency
+
+No recording, no screen sharing, no private rooms
+
+📁 Suggested Project Structure:
+Server:
+
+cpp
+Копировать
+Редактировать
+/server
+  ├─ mediasoupServer.ts     // mediasoup setup (Worker, Router, etc.)
+  ├─ mafiaRoom.ts           // singleton room logic
+  └─ signaling.ts           // signaling via Socket.IO
+Client:
+
+cpp
+Копировать
+Редактировать
+/client
+  ├─ useMediaStream.ts      // camera capture + track publishing
+  └─ useMediasoup.ts        // mediasoup-client integration and signaling
+📦 Required Dependencies:
+bash
+Копировать
+Редактировать
+npm install mediasoup mediasoup-client
+📚 References:
+Official docs: https://mediasoup.org/documentation/
+
+Example demo: https://github.com/versatica/mediasoup-demo

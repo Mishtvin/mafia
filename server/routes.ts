@@ -9,7 +9,6 @@ import {
   videoStatusMessageSchema,
   positionUpdateSchema
 } from "@shared/schema";
-import { VideoStreamManager } from "./videoHandler";
 import { connectionStatusSchema } from "@shared/registerEvents";
 import { 
   socketLogger, 
@@ -17,6 +16,9 @@ import {
   connectionLogger,
   logError 
 } from "./logger";
+import { initializeMediasoup } from "./mediasoupServer";
+import { registerSignalingEvents } from "./signaling";
+import { VideoStreamManager } from "./videoHandler";
 
 // For legacy compatibility - will be less used in server streaming model
 interface WebRTCSignalingData {
@@ -41,6 +43,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
     pingTimeout: 5000,
     maxHttpBufferSize: 1e8 // Increase buffer size for video chunks (100MB)
   });
+  
+  // Initialize mediasoup
+  try {
+    await initializeMediasoup();
+    console.log('mediasoup initialized successfully');
+  } catch (error) {
+    console.error('Failed to initialize mediasoup:', error);
+    process.exit(1);
+  }
   
   // Create video stream manager
   const videoManager = new VideoStreamManager(io);
@@ -103,7 +114,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
     // Send immediate welcome message to establish connection as stable
     socket.emit('welcome', { message: 'Connected to Socket.IO server' });
     
-    // Register video stream handlers
+    // Register mediasoup signaling events
+    registerSignalingEvents(io, socket);
+    
+    // Register video stream handlers (legacy)
     videoManager.registerHandlers(socket);
     
     let currentRoomToken: string | null = null;

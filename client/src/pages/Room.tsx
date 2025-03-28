@@ -4,14 +4,11 @@ import { NicknameForm } from "@/components/NicknameForm";
 import { RoomSidebar } from "@/components/RoomSidebar";
 import { VideoGrid } from "@/components/VideoGrid";
 import { useRoomContext } from "@/context/RoomContext";
-import { useSocketIO } from "@/hooks/useSocketIO";
-// Import the server-side streaming hook
-import { useServerVideoStream } from "@/hooks/useServerVideoStream";
+// Import the mediasoup hook
+import { useVideoTracks } from "@/hooks/useVideoTracks";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
-// Import registration utilities
-import { registerConnectionEvents, registerHeartbeat, registerVideoEvents } from "@shared/registerEvents";
 
 export default function Room() {
   const { token } = useParams<{ token: string }>();
@@ -26,98 +23,69 @@ export default function Room() {
   const [showNicknameForm, setShowNicknameForm] = useState(true);
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
 
-  // Setup Socket.IO connection
+  // Setup mediasoup video streaming
   const { 
-    isConnected,
-    joinRoom,
-    leaveRoom,
-    updateVideoStatus,
-    socket
-  } = useSocketIO(token);
-
-  // Setup server-side video streaming
-  const { 
-    localStream,
-    remoteStreams,
-    videoDevices,
-    selectedDeviceId,
+    participants: mediasoupParticipants,
+    localParticipant,
+    hasVideoEnabled,
+    selectCamera,
     toggleVideo,
-    switchCamera,
-    getParticipantsWithStreams,
-    hasVideoEnabled
-  } = useServerVideoStream(token, userId);
+    connect: connectToMediasoup,
+    updateParticipantPosition
+  } = useVideoTracks();
   
-  // Set up connection status tracking
+  // Track video devices
+  const [videoDevices, setVideoDevices] = useState<MediaDeviceInfo[]>([]);
+  const [selectedDeviceId, setSelectedDeviceId] = useState<string | null>(null);
+  
+  // Get video devices
   useEffect(() => {
-    if (!isConnected || !socket || !nickname || !token) return;
+    async function getDevices() {
+      try {
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        const videoInputs = devices.filter(device => device.kind === 'videoinput');
+        setVideoDevices(videoInputs);
+        
+        // Select first device if none selected
+        if (videoInputs.length > 0 && !selectedDeviceId) {
+          setSelectedDeviceId(videoInputs[0].deviceId);
+        }
+      } catch (error) {
+        console.error('Error getting video devices:', error);
+      }
+    }
     
-    console.log(`[REGISTER] Setting up connection registration for ${nickname} in room ${token}`);
+    getDevices();
     
-    // Event handler for connection status changes
-    const handleConnectionStatus = (status: any) => {
-      console.log(`[REGISTER] User connection update:`, status);
-      
-      // If a user connects/disconnects, force room update
-      const { userId: connectionUserId, connected } = status;
-      
-      // Don't update for our own events
-      if (connectionUserId === userId) return;
-      
-      // Request room state update to make sure we have latest data
-      fetch(`/api/rooms/${token}`)
-        .then(res => res.json())
-        .then(roomData => {
-          console.log(`[REGISTER] Received updated room state after connection event:`, 
-            roomData.participants.map((p: any) => p.nickname));
-          
-          setRoomState({
-            token,
-            participants: roomData.participants
-          });
-        })
-        .catch(err => console.error('[REGISTER] Error fetching room update:', err));
-    };
+    // Set up device change listener
+    navigator.mediaDevices.addEventListener('devicechange', getDevices);
     
-    // Register connection event handlers
-    const cleanupConnectionEvents = registerConnectionEvents(
-      socket, 
-      userId, 
-      token,
-      handleConnectionStatus
-    );
-    
-    // Register video events
-    const cleanupVideoEvents = registerVideoEvents(
-      socket,
-      (videoUserId) => console.log(`[REGISTER] User ${videoUserId} started streaming`),
-      (videoUserId) => console.log(`[REGISTER] User ${videoUserId} stopped streaming`)
-    );
-    
-    // Register heartbeat
-    const cleanupHeartbeat = registerHeartbeat(socket, userId, token);
-    
-    // Send initial connection status
-    socket.emit('userConnected', {
-      userId,
-      roomToken: token,
-      connected: true,
-      nickname,
-      timestamp: Date.now()
-    });
-    
-    // Cleanup when unmounting
     return () => {
-      cleanupConnectionEvents();
-      cleanupVideoEvents();
-      cleanupHeartbeat();
+      navigator.mediaDevices.removeEventListener('devicechange', getDevices);
     };
-  }, [isConnected, socket, userId, token, nickname, setRoomState]);
+  }, [selectedDeviceId]);
   
-  // Get participants with streams 
-  const participantsWithStreams = roomState?.participants 
-    ? getParticipantsWithStreams(roomState.participants)
-    : [];
-
+  // Switch camera handler
+  const switchCamera = async (deviceId: string) => {
+    setSelectedDeviceId(deviceId);
+    await selectCamera(deviceId);
+  };
+  
+  // Connect to mediasoup on room join
+  useEffect(() => {
+    if (token && userId && nickname && !showNicknameForm) {
+      connectToMediasoup(token, userId, nickname)
+        .catch(error => {
+          console.error('Error connecting to video server:', error);
+          toast({
+            title: "Connection error",
+            description: "Could not connect to video server. Please try again.",
+            variant: "destructive",
+          });
+        });
+    }
+  }, [token, userId, nickname, showNicknameForm, connectToMediasoup, toast]);
+  
   // Check if room exists on initial load
   useEffect(() => {
     const checkRoom = async () => {
@@ -156,194 +124,28 @@ export default function Room() {
   const handleNicknameSubmit = useCallback((nickname: string) => {
     setNickname(nickname);
     setShowNicknameForm(false);
+  }, [setNickname]);
 
-    if (isConnected) {
-      // Join room with nickname
-      joinRoom(nickname, userId);
-    }
-  }, [isConnected, joinRoom, userId, setNickname]);
-
-  // Update room state when participants change
+  // Update room state when mediasoup participants change
   useEffect(() => {
-    console.log(`[DEBUG ROOM] Room state update effect triggered`);
-    console.log(`[DEBUG ROOM] - localStream exists: ${!!localStream}`);
-    console.log(`[DEBUG ROOM] - participantsWithStreams count: ${participantsWithStreams.length}`);
-    console.log(`[DEBUG ROOM] - remoteStreams count: ${remoteStreams.length}`);
-    
-    if (localStream) {
-      console.log(`[DEBUG ROOM] - localStream details:`, {
-        active: localStream.active,
-        id: localStream.id,
-        tracks: localStream.getTracks().map(t => ({
-          kind: t.kind,
-          enabled: t.enabled,
-          readyState: t.readyState,
-          id: t.id,
-          label: t.label
-        }))
+    if (mediasoupParticipants.length > 0) {
+      setRoomState({
+        token,
+        participants: mediasoupParticipants
       });
     }
-    
-    if (roomState) {
-      console.log(`[DEBUG ROOM] Current room state participants:`, roomState.participants.map(p => ({
-        userId: p.userId, 
-        nickname: p.nickname,
-        hasVideo: p.hasVideo,
-        hasStream: !!p.stream
-      })));
-      
-      // Find the local user in the current room state
-      const localParticipant = roomState.participants.find(p => p.userId === userId);
-      console.log(`[DEBUG ROOM] Local participant found in roomState: ${!!localParticipant}`);
-      
-      // Start with the current participants
-      let updatedParticipants = [...participantsWithStreams];
-      
-      // If no participants, initialize with the ones from roomState
-      if (updatedParticipants.length === 0 && roomState.participants.length > 0) {
-        updatedParticipants = [...roomState.participants];
-      }
-      
-      console.log(`[DEBUG ROOM] Initial updatedParticipants:`, updatedParticipants.map(p => ({
-        userId: p.userId, 
-        nickname: p.nickname,
-        hasVideo: p.hasVideo,
-        hasStream: !!p.stream
-      })));
-      
-      // If the local user exists in room state but not in updatedParticipants, add them
-      if (localParticipant && !updatedParticipants.some(p => p.userId === userId)) {
-        console.log(`[DEBUG ROOM] Adding local participant to updatedParticipants`);
-        updatedParticipants.push({
-          ...localParticipant,
-          stream: localStream || undefined,
-          hasVideo: hasVideoEnabled,
-          streamActive: hasVideoEnabled,
-          hasStream: !!localStream,
-          roomToken: token
-        });
-      }
-      
-      // Force add local user if they don't exist in any list
-      if (!localParticipant && !updatedParticipants.some(p => p.userId === userId) && nickname) {
-        console.log(`[DEBUG ROOM] Force adding local user to participants list`);
-        updatedParticipants.push({
-          userId,
-          nickname,
-          position: updatedParticipants.length, // Add at the end
-          hasVideo: hasVideoEnabled,
-          stream: localStream || undefined,
-          streamActive: hasVideoEnabled,
-          hasStream: !!localStream,
-          roomToken: token
-        });
-      }
-      
-      // Always ensure the local user has the most up-to-date stream
-      // This is especially important after switching cameras
-      if (localStream) {
-        console.log(`[DEBUG ROOM] Updating stream for local participant in updatedParticipants`);
-        let localUserFound = false;
-        
-        updatedParticipants = updatedParticipants.map(p => {
-          if (p.userId === userId) {
-            localUserFound = true;
-            console.log(`[DEBUG ROOM] Updating stream for ${p.nickname} (local user)`);
-            return { 
-              ...p, 
-              stream: localStream, 
-              hasVideo: hasVideoEnabled,
-              streamActive: hasVideoEnabled,
-              hasStream: true,
-              roomToken: token
-            };
-          }
-          return p;
-        });
-        
-        // If still no local user, add them
-        if (!localUserFound && nickname) {
-          console.log(`[DEBUG ROOM] Still no local user, adding with stream`);
-          updatedParticipants.push({
-            userId,
-            nickname,
-            position: updatedParticipants.length, // Add at the end
-            hasVideo: hasVideoEnabled,
-            stream: localStream,
-            streamActive: hasVideoEnabled,
-            hasStream: true,
-            roomToken: token
-          });
-        }
-      }
-      
-      // Update remote users with their streams from the server
-      if (remoteStreams.length > 0) {
-        console.log(`[DEBUG ROOM] Updating remote participant streams`);
-        
-        // Create a map of remote streams by userId for easy lookup
-        const remoteStreamMap = new Map();
-        remoteStreams.forEach((stream: { userId: string; stream: MediaStream; active: boolean }) => {
-          remoteStreamMap.set(stream.userId, stream);
-        });
-        
-        // Update each participant with their stream if available
-        updatedParticipants = updatedParticipants.map(p => {
-          // Skip local user since we've already handled them
-          if (p.userId === userId) return p;
-          
-          // Check if we have a remote stream for this participant
-          const remoteStream = remoteStreamMap.get(p.userId);
-          if (remoteStream && remoteStream.active) {
-            console.log(`[DEBUG ROOM] Found active remote stream for ${p.nickname}`);
-            return {
-              ...p,
-              stream: remoteStream.stream,
-              streamActive: remoteStream.active,
-              hasStream: true,
-              roomToken: token
-            };
-          }
-          
-          // Keep existing stream data if no update
-          return p;
-        });
-      }
-      
-      // Log the final state we're about to set
-      console.log(`[DEBUG ROOM] Final updatedParticipants:`, updatedParticipants.map(p => ({
-        userId: p.userId, 
-        nickname: p.nickname,
-        hasVideo: p.hasVideo,
-        hasStream: !!p.stream,
-        streamActive: p.streamActive,
-        streamTracks: p.stream?.getTracks().length || 0
-      })));
-      
-      // Only update if we have participants to show
-      if (updatedParticipants.length > 0) {
-        setRoomState({
-          token,
-          participants: updatedParticipants
-        });
-      }
-    }
-  }, [participantsWithStreams, localStream, remoteStreams, token, userId, roomState, setRoomState, selectedDeviceId, nickname, hasVideoEnabled]);
+  }, [mediasoupParticipants, token, setRoomState]);
 
   // Handle video toggle
   const handleToggleVideo = useCallback(() => {
-    // Toggle video stream using the server-side stream toggle
-    toggleVideo(!hasVideoEnabled);
-  }, [hasVideoEnabled, toggleVideo]);
+    toggleVideo();
+  }, [toggleVideo]);
 
   // Handle leave room
   const handleLeaveRoom = useCallback(() => {
-    // Leave room via Socket.IO
-    leaveRoom(userId);
-    
     // Redirect to home page
     setLocation("/");
-  }, [leaveRoom, userId, setLocation]);
+  }, [setLocation]);
 
   // Toggle rearrange mode
   const toggleRearrangeMode = useCallback(() => {

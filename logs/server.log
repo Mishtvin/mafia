@@ -1,1 +1,71 @@
-=== Server Started 2025-03-28T17:27:45.092Z ===
+=== Server Started 2025-03-28T18:28:17.531Z ===
+[2025-03-28T18:28:17.672Z] [MAFIAROOM] Created MafiaRoom: mafia
+[2025-03-28T18:28:17.759Z] [MEDIASOUP] Creating mediasoup worker...
+[2025-03-28T18:29:27.178Z] [ROOM] Room created: {
+  "token": "d0589167"
+}
+[2025-03-28T18:29:29.392Z] [SOCKET] Client connected: {
+  "socketId": "FFNgn6Xkw7_mbYR-AAAC"
+}
+[2025-03-28T18:29:29.392Z] [SIGNALING] New connection: FFNgn6Xkw7_mbYR-AAAC
+[2025-03-28T18:29:29.576Z] [MAFIAROOM] Added participant: 0cb04e5a-3ea6-427c-a183-c2686e2aacf6, nickname: mishtvin, position: 0
+[2025-03-28T18:29:30.565Z] [SIGNALING] Participant 0cb04e5a-3ea6-427c-a183-c2686e2aacf6 joined the room
+[2025-03-28T18:29:30.926Z] [MAFIAROOM] Removed participant: 0cb04e5a-3ea6-427c-a183-c2686e2aacf6
+[2025-03-28T18:29:31.503Z] [SOCKET] Disconnected socket that wasn't in a room: {
+  "socketId": "jshCVLd0DYpSrIZjAAAO"
+}
+[2025-03-28T18:29:31.719Z] [SIGNALING] Participant 0cb04e5a-3ea6-427c-a183-c2686e2aacf6 joined the room
+[2025-03-28T18:29:32.109Z] [MAFIAROOM] Removed participant: 0cb04e5a-3ea6-427c-a183-c2686e2aacf6
+[2025-03-28T18:29:32.729Z] [SIGNALING] Participant 0cb04e5a-3ea6-427c-a183-c2686e2aacf6 left the room
+[2025-03-28T18:29:33.130Z] [MAFIAROOM] Added participant: 0cb04e5a-3ea6-427c-a183-c2686e2aacf6, nickname: mishtvin, position: 0
+[2025-03-28T18:29:33.675Z] [SOCKET] Disconnected socket that wasn't in a room: {
+  "socketId": "CV1oyD97zIKHeCDCAAAd"
+}
+[2025-03-28T18:29:33.879Z] [SIGNALING] Participant 0cb04e5a-3ea6-427c-a183-c2686e2aacf6 joined the room
+[2025-03-28T18:29:35.469Z] [MAFIAROOM] Removed participant: 0cb04e5a-3ea6-427c-a183-c2686e2aacf6
+[2025-03-28T18:29:35.469Z] [SIGNALING] Participant 0cb04e5a-3ea6-427c-a183-c2686e2aacf6 left the room
+[2025-03-28T18:29:36.215Z] [SOCKET] Disconnected socket that wasn't in a room: {
+  "socketId": "Om-ZKYt374oANeuCAAAn"
+}
+[2025-03-28T18:29:36.825Z] [MAFIAROOM] Removed participant: 0cb04e5a-3ea6-427c-a183-c2686e2aacf6
+[2025-03-28T18:29:36.826Z] [SIGNALING] Participant 0cb04e5a-3ea6-427c-a183-c2686e2aacf6 left the room
+[2025-03-28T18:29:38.056Z] [MAFIAROOM] Removed participant: 0cb04e5a-3ea6-427c-a183-c2686e2aacf6
+[2025-03-28T18:29:38.056Z] [SIGNALING] Participant 0cb04e5a-3ea6-427c-a183-c2686e2aacf6 left the room
+[2025-03-28T18:29:38.658Z] [SOCKET] Disconnected socket that wasn't in a room: {
+  "socketId": "RKFMQgD05gJM_tdzAAA3"
+}
+[2025-03-28T18:29:39.251Z] [MAFIAROOM] Removed participant: 0cb04e5a-3ea6-427c-a183-c2686e2aacf6
+[2025-03-28T18:29:39.251Z] [SIGNALING] Participant 0cb04e5a-3ea6-427c-a183-c2686e2aacf6 left the room
+[2025-03-28T18:29:40.620Z] [MAFIAROOM] Removed participant: 0cb04e5a-3ea6-427c-a183-c2686e2aacf6
+[2025-03-28T18:29:40.620Z] [SIGNALING] Participant 0cb04e5a-3ea6-427c-a183-c2686e2aacf6 left the room
+[2025-03-28T18:29:41.217Z] [SOCKET] Disconnected socket that wasn't in a room: {
+  "socketId": "Qr532gK8XDydRv0bAABH"
+}
+[2025-03-28T18:29:41.814Z] [SIGNALING] New connection: UmQlpH_NMtsOh5BkAABP
+[2025-03-28T18:29:41.815Z] [MAFIAROOM] Removed participant: 0cb04e5a-3ea6-427c-a183-c2686e2aacf6
+[2025-03-28T18:29:42.970Z] [MAFIAROOM] Removed participant: 0cb04e5a-3ea6-427c-a183-c2686e2aacf6
+[2025-03-28T18:29:42.970Z] [SIGNALING] Participant 0cb04e5a-3ea6-427c-a183-c2686e2aacf6 left the room
+[2025-03-28T18:29:43.587Z] [SOCKET] Disconnected socket that wasn't in a room: {
+  "socketId": "LEUE-X5sYNHIwm0-AABX"
+}
+[2025-03-28T18:29:43.988Z] [MAFIAROOM] Removed participant: 0cb04e5a-3ea6-427c-a183-c2686e2aacf6
+[2025-03-28T18:29:43.988Z] [SIGNALING] Participant 0cb04e5a-3ea6-427c-a183-c2686e2aacf6 left the room
+[2025-03-28T18:29:45.148Z] [MAFIAROOM] Added participant: 0cb04e5a-3ea6-427c-a183-c2686e2aacf6, nickname: mishtvin, position: 0
+[2025-03-28T18:29:45.149Z] [SIGNALING] Participant 0cb04e5a-3ea6-427c-a183-c2686e2aacf6 joined the room
+[2025-03-28T18:29:46.154Z] [MAFIAROOM] Removed participant: 0cb04e5a-3ea6-427c-a183-c2686e2aacf6
+[2025-03-28T18:29:46.154Z] [SOCKET] Disconnected socket that wasn't in a room: {
+  "socketId": "hjZHcySgr16Sx_MMAABq"
+}
+[2025-03-28T18:29:46.154Z] [SIGNALING] Participant 0cb04e5a-3ea6-427c-a183-c2686e2aacf6 left the room
+[2025-03-28T18:29:47.637Z] [MAFIAROOM] Removed participant: 0cb04e5a-3ea6-427c-a183-c2686e2aacf6
+[2025-03-28T18:29:47.637Z] [SIGNALING] Participant 0cb04e5a-3ea6-427c-a183-c2686e2aacf6 left the room
+[2025-03-28T18:29:48.388Z] [SOCKET] Disconnected socket that wasn't in a room: {
+  "socketId": "g0s0jjk-L-22siqyAABx"
+}
+[2025-03-28T18:29:48.956Z] [MAFIAROOM] Removed participant: 0cb04e5a-3ea6-427c-a183-c2686e2aacf6
+[2025-03-28T18:29:48.956Z] [SIGNALING] Participant 0cb04e5a-3ea6-427c-a183-c2686e2aacf6 left the room
+[2025-03-28T18:29:50.439Z] [MAFIAROOM] Removed participant: 0cb04e5a-3ea6-427c-a183-c2686e2aacf6
+[2025-03-28T18:29:50.439Z] [SOCKET] Disconnected socket that wasn't in a room: {
+  "socketId": "70J5vcBvLHlgpX9AAAB9"
+}
+[2025-03-28T18:29:50.439Z] [SIGNALING] Participant 0cb04e5a-3ea6-427c-a183-c2686e2aacf6 left the room

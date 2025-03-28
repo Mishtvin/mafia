@@ -3,18 +3,21 @@ import { useRoomContext } from "@/context/RoomContext";
 import { VideoTile } from "@/components/VideoTile";
 import { EmptySlot } from "@/components/EmptySlot";
 import { useDndSorting } from "@/lib/dnd";
-import { useSocketIO } from "@/hooks/useSocketIO";
+import { useVideoTracks } from "@/hooks/useVideoTracks";
 
 export function VideoGrid() {
   const { roomState, userId, isRearranging } = useRoomContext();
-  const { updatePositions } = useSocketIO(roomState?.token || "");
+  const { updateParticipantPosition } = useVideoTracks();
   
   // Initialize drag and drop functionality with the new hook
   const { handleDragStart, handleDragOver, handleDrop } = useDndSorting(
     roomState?.participants || [],
     (positions) => {
-      if (positions.length > 0 && roomState?.token) {
-        updatePositions(positions);
+      if (positions.length > 0) {
+        // Update each participant's position via mediasoup
+        positions.forEach(pos => {
+          updateParticipantPosition(pos.userId, pos.position);
+        });
       }
     }
   );

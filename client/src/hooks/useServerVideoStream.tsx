@@ -54,12 +54,10 @@ export function useServerVideoStream(roomToken: string, userId: string) {
     const handleNewStream = (data: VideoStreamMetadata) => {
       const { userId: streamUserId, width, height, frameRate } = data;
 
-      console.log(`[VIDEO] New stream available from ${streamUserId}: ${width}x${height}@${frameRate}fps`);
-      
+      // Only log new streams not coming from the current user
       if (streamUserId === userId) {
         // This is our own stream coming back from the server
         // No special handling needed
-        console.log('[VIDEO] Received my own stream notification from server');
         return;
       }
       
@@ -83,7 +81,7 @@ export function useServerVideoStream(roomToken: string, userId: string) {
         return newMap;
       });
       
-      console.log(`[VIDEO] Created and registered new stream object for user ${streamUserId}`);
+      // Stream created and registered
     };
     
     // Handle video chunk from server
