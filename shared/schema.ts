@@ -90,4 +90,19 @@ export type ParticipantState = {
   position: number;
   hasVideo: boolean;
   stream?: MediaStream;
+  // New fields for server-side streaming
+  videoWidth?: number;
+  videoHeight?: number;
+  frameRate?: number;
 };
+
+// Video stream related types
+export const videoStreamMetadataSchema = z.object({
+  userId: z.string(),
+  width: z.number(),
+  height: z.number(),
+  frameRate: z.number(),
+  codecParams: z.record(z.string(), z.any()).optional()
+});
+
+export type VideoStreamMetadata = z.infer<typeof videoStreamMetadataSchema>;

@@ -1,0 +1,81 @@
+Initializing Socket.IO connection...
+index-axcrIi6l.js:133 [DEBUG ROOM] Room state update effect triggered
+index-axcrIi6l.js:133 [DEBUG ROOM] - localStream exists: false
+index-axcrIi6l.js:133 [DEBUG ROOM] - participantsWithStreams count: 0
+index-axcrIi6l.js:133 [DEBUG ROOM] Room state update effect triggered
+index-axcrIi6l.js:133 [DEBUG ROOM] - localStream exists: false
+index-axcrIi6l.js:133 [DEBUG ROOM] - participantsWithStreams count: 0
+index-axcrIi6l.js:133 [DEBUG ROOM] Current room state participants: []
+index-axcrIi6l.js:133 [DEBUG ROOM] Local participant found in roomState: false
+index-axcrIi6l.js:133 [DEBUG ROOM] Initial updatedParticipants: []
+index-axcrIi6l.js:133 [DEBUG ROOM] Final updatedParticipants: []
+index-axcrIi6l.js:93 Socket.IO connected with ID: B0xg_ogMaDgyVG_qAAAh
+index-axcrIi6l.js:93 Socket.IO connected with ID: tcsoDJDqy6TmUd9ZAAAg
+index-axcrIi6l.js:93 Received welcome message: {message: 'Connected to Socket.IO server'}
+index-axcrIi6l.js:93 [CAMERA] Getting initial camera stream
+index-axcrIi6l.js:93 Received welcome message: {message: 'Connected to Socket.IO server'}
+index-axcrIi6l.js:93 [DEBUG GRID] Room has 0 participants
+index-axcrIi6l.js:93 [DEBUG GRID] Participants details: []
+index-axcrIi6l.js:93 [DEBUG GRID] Final grid: 0 videos, 12 empty slots
+index-axcrIi6l.js:93 Initializing Socket.IO connection...
+index-axcrIi6l.js:133 [DEBUG ROOM] Room state update effect triggered
+index-axcrIi6l.js:133 [DEBUG ROOM] - localStream exists: false
+index-axcrIi6l.js:133 [DEBUG ROOM] - participantsWithStreams count: 0
+index-axcrIi6l.js:133 [DEBUG ROOM] Current room state participants: []
+index-axcrIi6l.js:133 [DEBUG ROOM] Local participant found in roomState: false
+index-axcrIi6l.js:133 [DEBUG ROOM] Initial updatedParticipants: []
+index-axcrIi6l.js:133 [DEBUG ROOM] Force adding local user to participants list
+index-axcrIi6l.js:133 [DEBUG ROOM] Final updatedParticipants: [{…}]
+index-axcrIi6l.js:93 [DEBUG GRID] Room has 1 participants
+index-axcrIi6l.js:93 [DEBUG GRID] Participants details: [{…}]
+index-axcrIi6l.js:93 [DEBUG GRID] Final grid: 1 videos, 11 empty slots
+index-axcrIi6l.js:40 Error: A <Select.Item /> must have a value prop that is not an empty string. This is because the Select value can be set to an empty string to clear the selection and show the placeholder.
+    at index-axcrIi6l.js:133:15195
+    at uu (index-axcrIi6l.js:38:16994)
+    at Zd (index-axcrIi6l.js:40:1571)
+    at Tm (index-axcrIi6l.js:40:45889)
+    at _m (index-axcrIi6l.js:40:39699)
+    at M0 (index-axcrIi6l.js:40:39627)
+    at Ms (index-axcrIi6l.js:40:39481)
+    at sc (index-axcrIi6l.js:40:35863)
+    at df (index-axcrIi6l.js:40:36665)
+    at zn (index-axcrIi6l.js:38:3272)
+Qa @ index-axcrIi6l.js:40
+n.callback @ index-axcrIi6l.js:40
+Hd @ index-axcrIi6l.js:38
+af @ index-axcrIi6l.js:40
+xm @ index-axcrIi6l.js:40
+I0 @ index-axcrIi6l.js:40
+F0 @ index-axcrIi6l.js:40
+Vn @ index-axcrIi6l.js:40
+df @ index-axcrIi6l.js:40
+zn @ index-axcrIi6l.js:38
+(anonymous) @ index-axcrIi6l.js:40Understand this errorAI
+index-axcrIi6l.js:133 Uncaught Error: A <Select.Item /> must have a value prop that is not an empty string. This is because the Select value can be set to an empty string to clear the selection and show the placeholder.
+    at index-axcrIi6l.js:133:15195
+    at uu (index-axcrIi6l.js:38:16994)
+    at Zd (index-axcrIi6l.js:40:1571)
+    at Tm (index-axcrIi6l.js:40:45889)
+    at _m (index-axcrIi6l.js:40:39699)
+    at M0 (index-axcrIi6l.js:40:39627)
+    at Ms (index-axcrIi6l.js:40:39481)
+    at sc (index-axcrIi6l.js:40:35863)
+    at df (index-axcrIi6l.js:40:36665)
+    at zn (index-axcrIi6l.js:38:3272)
+(anonymous) @ index-axcrIi6l.js:133
+uu @ index-axcrIi6l.js:38
+Zd @ index-axcrIi6l.js:40
+Tm @ index-axcrIi6l.js:40
+_m @ index-axcrIi6l.js:40
+M0 @ index-axcrIi6l.js:40
+Ms @ index-axcrIi6l.js:40
+sc @ index-axcrIi6l.js:40
+df @ index-axcrIi6l.js:40
+zn @ index-axcrIi6l.js:38
+(anonymous) @ index-axcrIi6l.js:40Understand this errorAI
+index-axcrIi6l.js:93 Cleaning up Socket.IO connection
+index-axcrIi6l.js:93 Socket.IO disconnected: io client disconnect
+index-axcrIi6l.js:93 Cleaning up Socket.IO connection
+index-axcrIi6l.js:93 Socket.IO disconnected: io client disconnect
+index-axcrIi6l.js:93 Cleaning up Socket.IO connection
+index-axcrIi6l.js:93 [CAMERA] Error initializing camera: AbortError: Timeout starting video source

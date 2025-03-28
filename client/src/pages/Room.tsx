@@ -5,7 +5,8 @@ import { RoomSidebar } from "@/components/RoomSidebar";
 import { VideoGrid } from "@/components/VideoGrid";
 import { useRoomContext } from "@/context/RoomContext";
 import { useSocketIO } from "@/hooks/useSocketIO";
-import { useWebRTCWithSocketIO } from "@/hooks/useWebRTCWithSocketIO";
+// Import the new server-side streaming hook instead of WebRTC p2p
+import { useServerVideoStream } from "@/hooks/useServerVideoStream";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
@@ -32,15 +33,20 @@ export default function Room() {
     updateVideoStatus
   } = useSocketIO(token);
 
-  // Setup WebRTC connections with Socket.IO
+  // Setup server-side video streaming
   const { 
-    participants: participantsWithStreams,
     localStream,
-    toggleVideo,
     videoDevices,
     selectedDeviceId,
-    switchCamera
-  } = useWebRTCWithSocketIO(token, userId);
+    toggleVideo,
+    switchCamera,
+    getParticipantsWithStreams
+  } = useServerVideoStream(token, userId);
+  
+  // Get participants with streams 
+  const participantsWithStreams = roomState?.participants 
+    ? getParticipantsWithStreams(roomState.participants)
+    : [];
 
   // Check if room exists on initial load
   useEffect(() => {
@@ -288,7 +294,7 @@ export default function Room() {
                 </SelectTrigger>
                 <SelectContent>
                   {videoDevices.length === 0 ? (
-                    <SelectItem value="">No cameras detected</SelectItem>
+                    <div className="px-2 py-4 text-sm text-muted-foreground">No cameras detected</div>
                   ) : (
                     videoDevices.map(device => (
                       <SelectItem key={device.deviceId} value={device.deviceId}>

@@ -19,7 +19,7 @@ export function RoomProvider({ children }: { children: React.ReactNode }) {
   const [nickname, setNickname] = useState<string>("");
   const [isRearranging, setIsRearranging] = useState<boolean>(false);
   
-  // Generate a unique user ID for this session (test 3)
+  // Generate a unique user ID for this session
   const userId = useMemo(() => {
     // Check if we already have a userId in sessionStorage
     const existingUserId = sessionStorage.getItem("userId");

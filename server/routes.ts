@@ -9,8 +9,9 @@ import {
   videoStatusMessageSchema,
   positionUpdateSchema
 } from "@shared/schema";
+import { VideoStreamManager } from "./videoHandler";
 
-// Modify the WebRTC signaling types for Socket.IO
+// For legacy compatibility - will be less used in server streaming model
 interface WebRTCSignalingData {
   type: 'webrtc';
   action: 'offer' | 'answer' | 'ice-candidate';
@@ -30,8 +31,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
       methods: ["GET", "POST"]
     },
     pingInterval: 10000,
-    pingTimeout: 5000
+    pingTimeout: 5000,
+    maxHttpBufferSize: 1e8 // Increase buffer size for video chunks (100MB)
   });
+  
+  // Create video stream manager
+  const videoManager = new VideoStreamManager(io);
   
   // Map to track socket connections by room and user ID
   const rooms = new Map<string, Map<string, string>>(); // roomToken -> Map<userId, socketId>
@@ -83,6 +88,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
     
     // Send immediate welcome message to establish connection as stable
     socket.emit('welcome', { message: 'Connected to Socket.IO server' });
+    
+    // Register video stream handlers
+    videoManager.registerHandlers(socket);
     
     let currentRoomToken: string | null = null;
     let currentUserId: string | null = null;
@@ -314,6 +322,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
     socket.on('disconnect', async () => {
       try {
         if (currentRoomToken && currentUserId) {
+          // Clean up video streams
+          videoManager.handleDisconnect(socket, currentRoomToken, currentUserId);
+          
           // Get room
           const room = await storage.getRoom(currentRoomToken);
           if (!room) return;

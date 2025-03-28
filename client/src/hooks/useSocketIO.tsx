@@ -190,6 +190,8 @@ export function useSocketIO(roomToken: string) {
     leaveRoom,
     updateVideoStatus,
     updatePositions,
-    sendWebRTCSignal
+    sendWebRTCSignal,
+    socket: socketRef.current, // Expose the socket instance for direct communication
+    sendMessage   // Expose the sendMessage function for custom events
   };
 }
