@@ -1,6 +1,5 @@
-import { useRef, useEffect, useState, useCallback } from "react";
+import { useRef, useEffect, useState } from "react";
 import { ParticipantState } from "@shared/schema";
-import { useSocketIO } from "@/hooks/useSocketIO";
 
 interface VideoTileProps {
   participant: ParticipantState;
@@ -21,109 +20,38 @@ export function VideoTile({
 }: VideoTileProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const [frameCount, setFrameCount] = useState(0);
-  const [receivedImage, setReceivedImage] = useState<string | null>(null);
   const animationRef = useRef<number | null>(null);
-  
-  // Get socket connection for receiving frames
-  const { socket } = useSocketIO(participant.roomToken || "");
+  const [isConnecting, setIsConnecting] = useState(!participant.stream && participant.hasVideo);
   
   // Connect the stream to the video element when it changes
   useEffect(() => {
-    console.log(`[VIDEO] Setting up video for ${participant.nickname} (${isLocal ? 'local' : 'remote'})`);
-    console.log(`[VIDEO] hasVideo: ${participant.hasVideo}, hasStream: ${!!participant.stream}`);
+    console.log(`VideoTile for ${participant.nickname}: hasVideo=${participant.hasVideo}, stream=${participant.stream ? 'present' : 'missing'}`);
     
-    // Simply set the srcObject and nothing else
     if (videoRef.current && participant.stream) {
+      console.log(`Setting video stream for ${participant.nickname}`);
       videoRef.current.srcObject = participant.stream;
+      setIsConnecting(false);
+    } else if (participant.hasVideo && !participant.stream) {
+      console.log(`Participant ${participant.nickname} has video enabled but no stream yet, showing connecting state`);
+      setIsConnecting(true);
+    } else {
+      console.log(`Participant ${participant.nickname} has video disabled, hiding connecting state`);
+      setIsConnecting(false);
     }
     
     // Cleanup when unmounted
     return () => {
       if (videoRef.current) {
+        console.log(`Cleaning up video element for ${participant.nickname}`);
         videoRef.current.srcObject = null;
       }
     };
-  }, [participant.stream, participant.nickname, isLocal, participant.hasVideo]);
+  }, [participant.stream, participant.hasVideo, participant.nickname]);
   
-  // Handle receiving image frames from server
+  // Set up the canvas-based visualization for waiting state
   useEffect(() => {
-    if (!socket || isLocal) return;
-    
-    const onImageReceived = (data: any) => {
-      // Only process images for this participant
-      if (data.userId === participant.userId && participant.hasVideo) {
-        setReceivedImage(data.image);
-        setFrameCount(prev => prev + 1);
-        
-        // Log occasionally to avoid console spam
-        if (data.frameId && data.frameId % 180 === 0) {
-          console.log(`[VIDEO] Received image frame #${data.frameId} for ${participant.nickname}`);
-        }
-      }
-    };
-    
-    // Handle processed frames from server
-    const onProcessedFrameReceived = (data: any) => {
-      // Only process frames for this participant
-      if (data.userId === participant.userId && participant.hasVideo) {
-        // Log receipt of processed frames occasionally
-        if (data.frameId && data.frameId % 180 === 0) {
-          console.log(`[VIDEO] Received processed frame #${data.frameId} for ${participant.nickname}`);
-        }
-        
-        // Mark that we've received a frame (incrementing counter helps trigger renders)
-        setFrameCount(prev => prev + 1);
-      }
-    };
-    
-    socket.on('video:image', onImageReceived);
-    socket.on('video:processedFrame', onProcessedFrameReceived);
-    
-    console.log(`[VIDEO] Registered frame handlers for ${participant.nickname}`);
-    
-    return () => {
-      socket.off('video:image', onImageReceived);
-      socket.off('video:processedFrame', onProcessedFrameReceived);
-      console.log(`[VIDEO] Cleaned up frame handlers for ${participant.nickname}`);
-    };
-  }, [socket, participant.userId, participant.hasVideo, participant.nickname, isLocal]);
-  
-  // Draw received image to canvas
-  useEffect(() => {
-    if (!canvasRef.current || !receivedImage) return;
-    
-    const canvas = canvasRef.current;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-    
-    // Create image element
-    const img = new Image();
-    img.onload = () => {
-      // Clear canvas
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
-      
-      // Draw image
-      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-      
-      // Add user indicator
-      ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
-      ctx.fillRect(0, canvas.height - 30, canvas.width, 30);
-      
-      // Add frame info
-      ctx.fillStyle = 'white';
-      ctx.font = '12px Arial';
-      ctx.textAlign = 'right';
-      ctx.fillText(`Frame: ${frameCount}`, canvas.width - 10, canvas.height - 10);
-    };
-    img.src = receivedImage;
-  }, [receivedImage, frameCount]);
-  
-  // Set up the canvas-based visualization for video placeholders or when no frame received yet
-  useEffect(() => {
-    // Don't run this for local video (which uses the real video stream)
-    // or if we already received frames from server
-    if (isLocal || receivedImage || !participant.hasVideo || !canvasRef.current) return;
+    // Only run for participants with video enabled but no stream yet
+    if (!canvasRef.current || !isConnecting) return;
     
     const ctx = canvasRef.current.getContext('2d');
     if (!ctx) return;
@@ -134,7 +62,7 @@ export function VideoTile({
       animationRef.current = null;
     }
     
-    // Create a simple animation to simulate active video while waiting for actual frames
+    // Create a simple animation to show connecting state
     const animate = () => {
       if (!canvasRef.current) return;
       
@@ -167,36 +95,13 @@ export function VideoTile({
       ctx.textBaseline = 'middle';
       ctx.fillText(initial, x, y);
       
-      // Add info text
+      // Add connecting text
       ctx.fillStyle = '#aaa';
       ctx.font = '14px Arial';
       ctx.textAlign = 'center';
-      ctx.fillText(`Waiting for video stream...`, width/2, height - 30);
-      
-      // Draw a simple "signal" indicator to show activity
-      const bars = 5;
-      const barWidth = 4;
-      const barSpacing = 3;
-      const barMaxHeight = 15;
-      const barX = width - 20;
-      const barY = 20;
-      
-      for (let i = 0; i < bars; i++) {
-        // Calculate a height that varies with time and bar position
-        const heightPercent = 0.3 + Math.abs(Math.sin(time * 2 + i * 0.7)) * 0.7;
-        const barHeight = barMaxHeight * heightPercent;
-        
-        ctx.fillStyle = '#4ade80';
-        ctx.fillRect(
-          barX + i * (barWidth + barSpacing),
-          barY - barHeight,
-          barWidth,
-          barHeight
-        );
-      }
-      
-      // Track animation
-      setFrameCount(prev => prev + 1);
+      const dotCount = Math.floor(time % 4);
+      const dots = '.'.repeat(dotCount);
+      ctx.fillText(`Connecting${dots}`, width/2, height - 30);
       
       // Schedule next frame
       animationRef.current = requestAnimationFrame(animate);
@@ -212,7 +117,7 @@ export function VideoTile({
         animationRef.current = null;
       }
     };
-  }, [participant.hasVideo, participant.nickname, isLocal, receivedImage]);
+  }, [isConnecting, participant.nickname]);
   
   return (
     <div 
@@ -227,8 +132,8 @@ export function VideoTile({
       data-position={participant.position}
     >
       <div className="video-container relative bg-gray-900 w-full aspect-video">
-        {/* Local video stream for local user */}
-        {isLocal && participant.hasVideo && (
+        {/* Video element for both local and remote streams */}
+        {participant.hasVideo && participant.stream && (
           <video
             ref={videoRef}
             autoPlay
@@ -239,18 +144,23 @@ export function VideoTile({
           />
         )}
         
-        {/* Canvas-based visualization and frame rendering for everyone */}
-        <canvas
-          ref={canvasRef}
-          width={320}
-          height={180}
-          className={`w-full h-full object-cover ${isLocal && participant.hasVideo ? 'hidden' : ''}`}
-        />
+        {/* Canvas for connecting animation */}
+        {isConnecting && (
+          <canvas
+            ref={canvasRef}
+            width={320}
+            height={180}
+            className="w-full h-full object-cover"
+          />
+        )}
         
         {/* Placeholder when video is off */}
         {!participant.hasVideo && (
           <div className="absolute inset-0 flex items-center justify-center bg-gray-800">
-            <span className="material-icons text-white text-4xl">videocam_off</span>
+            <div className="flex flex-col items-center">
+              <span className="material-icons text-white text-4xl mb-2">videocam_off</span>
+              <span className="text-white text-sm">Camera Off</span>
+            </div>
           </div>
         )}
         
@@ -270,13 +180,13 @@ export function VideoTile({
             {participant.hasVideo ? "videocam" : "videocam_off"}
           </span>
           
-          {/* Server icon to indicate server-processed video */}
-          {participant.hasVideo && !isLocal && (
+          {/* MediaSoup SFU indicator */}
+          {participant.hasVideo && (
             <span 
               className="material-icons text-blue-400 bg-black bg-opacity-50 p-1 rounded-full ml-1"
-              title="Server Processed Video"
+              title="Server-side WebRTC (MediaSoup)"
             >
-              dns
+              router
             </span>
           )}
         </div>

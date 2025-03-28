@@ -19,8 +19,9 @@ import {
 import { initializeMediasoup } from "./mediasoupServer";
 import { registerSignalingEvents } from "./signaling";
 import { VideoStreamManager } from "./videoHandler";
+// MediaSoup implementation now replaces the old video streaming code
 
-// For legacy compatibility - will be less used in server streaming model
+// Interface for WebRTC signaling data (kept for compatibility)
 interface WebRTCSignalingData {
   type: 'webrtc';
   action: 'offer' | 'answer' | 'ice-candidate';

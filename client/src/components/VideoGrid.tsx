@@ -22,46 +22,26 @@ export function VideoGrid() {
     }
   );
 
-  // Get participants and empty slots
+  // Get participants and empty slots with additional validation
   const getVideosAndEmptySlots = useCallback(() => {
-    if (!roomState) {
-      console.log(`[DEBUG GRID] roomState is null, returning empty grid`);
-      return { videos: [], emptySlots: Array(12).fill(null) };
+    // Safety check for roomState
+    if (!roomState || !roomState.participants || !Array.isArray(roomState.participants)) {
+      console.log('No room state or empty participants array, showing empty grid');
+      return { videos: [], emptySlots: Array(12).fill(null).map((_, i) => i) };
     }
     
-    console.log(`[DEBUG GRID] Room has ${roomState.participants.length} participants`);
-    
-    // Log participants with stream info
-    console.log(`[DEBUG GRID] Participants details:`, 
-      roomState.participants.map(p => ({
-        userId: p.userId,
-        nickname: p.nickname,
-        position: p.position,
-        hasVideo: p.hasVideo,
-        hasStream: !!p.stream,
-        isLocal: p.userId === userId,
-        streamActive: p.stream?.active,
-        streamTracks: p.stream?.getTracks().length
-      }))
-    );
-    
-    // Check for participants with missing streams when they should have video
-    const missingStreamParticipants = roomState.participants.filter(p => p.hasVideo && !p.stream);
-    if (missingStreamParticipants.length > 0) {
-      console.warn(`[DEBUG GRID] Warning: ${missingStreamParticipants.length} participants have hasVideo=true but no stream:`, 
-        missingStreamParticipants.map(p => p.nickname)
-      );
-    }
+    // Log for debugging
+    console.log('Rendering VideoGrid with participants:', roomState.participants);
     
     // Sort participants by position
-    const sortedParticipants = [...roomState.participants].sort(
-      (a, b) => a.position - b.position
-    );
+    const sortedParticipants = [...roomState.participants]
+      .filter(p => p && typeof p === 'object') // Filter out any invalid participants
+      .sort((a, b) => a.position - b.position);
     
     // Make sure all positions are valid (0 to 11)
     sortedParticipants.forEach(p => {
       if (p.position < 0 || p.position > 11) {
-        console.warn(`[DEBUG GRID] Warning: Participant ${p.nickname} has invalid position ${p.position}`);
+        console.warn(`Warning: Participant ${p.nickname} has invalid position ${p.position}`);
       }
     });
     
@@ -76,22 +56,32 @@ export function VideoGrid() {
       }
     }
     
-    console.log(`[DEBUG GRID] Final grid: ${sortedParticipants.length} videos, ${emptySlots.length} empty slots`);
-    
+    console.log(`Found ${sortedParticipants.length} participants and ${emptySlots.length} empty slots`);
     return { videos: sortedParticipants, emptySlots };
-  }, [roomState, userId]);
+  }, [roomState]);
   
   const { videos, emptySlots } = getVideosAndEmptySlots();
 
-  // If we have no participants at all, show a placeholder message
+  // If we have no participants at all, show a placeholder message with helpful instructions
   if (videos.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center h-64 p-8 bg-gray-100 rounded-lg border border-gray-200">
         <div className="material-icons text-gray-400 text-6xl mb-4">groups_off</div>
         <h3 className="text-xl font-medium text-gray-800 mb-2">No Participants Yet</h3>
-        <p className="text-gray-600 text-center max-w-md">
-          Share the room link with others to invite them to join this video conference.
+        <p className="text-gray-600 text-center max-w-md mb-4">
+          You are the first one here! Turn on your camera to see yourself in the grid.
         </p>
+        <div className="bg-blue-50 p-3 rounded-md border border-blue-200 w-full max-w-md">
+          <h4 className="font-medium text-blue-800 flex items-center mb-1">
+            <span className="material-icons text-blue-600 mr-1 text-sm">info</span> 
+            Quick Tips
+          </h4>
+          <ul className="text-sm text-blue-700 list-disc pl-5 space-y-1">
+            <li>Click the "Turn On Camera" button above to start your webcam</li>
+            <li>Share the room URL with others to invite them</li>
+            <li>You can rearrange videos by dragging them once more people join</li>
+          </ul>
+        </div>
       </div>
     );
   }

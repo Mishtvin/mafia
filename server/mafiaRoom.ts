@@ -67,14 +67,49 @@ class MafiaRoom {
 
   /**
    * Add a new participant to the room
+   * If the participant already exists, update their nickname
    */
   async addParticipant(id: string, nickname: string): Promise<Participant> {
-    if (this.participants.size >= MAX_PARTICIPANTS) {
+    if (this.participants.size >= MAX_PARTICIPANTS && !this.participants.has(id)) {
       throw new Error('Room is full');
     }
 
+    // Check if participant already exists
     if (this.participants.has(id)) {
-      throw new Error('Participant already exists');
+      // Update nickname if needed
+      const existingParticipant = this.participants.get(id)!;
+      if (existingParticipant.nickname !== nickname) {
+        existingParticipant.nickname = nickname;
+        roomLogger.log(`Updated participant nickname: ${id}, new nickname: ${nickname}`);
+      } else {
+        roomLogger.log(`Participant reconnected: ${id}, nickname: ${nickname}`);
+      }
+      
+      // Close any existing transports to avoid conflicts
+      if (existingParticipant.producerTransport) {
+        try {
+          await existingParticipant.producerTransport.close();
+          existingParticipant.producerTransport = undefined;
+        } catch (error) {
+          roomLogger.error(`Error closing existing producer transport for ${id}`, error);
+        }
+      }
+      
+      if (existingParticipant.consumerTransport) {
+        try {
+          await existingParticipant.consumerTransport.close();
+          existingParticipant.consumerTransport = undefined;
+        } catch (error) {
+          roomLogger.error(`Error closing existing consumer transport for ${id}`, error);
+        }
+      }
+      
+      // Reset video status
+      existingParticipant.hasVideo = false;
+      existingParticipant.producer = undefined;
+      existingParticipant.consumers = new Map();
+      
+      return existingParticipant;
     }
 
     // Find the next available position

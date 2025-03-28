@@ -1,10 +1,10 @@
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { useParams, useLocation } from "wouter";
 import { NicknameForm } from "@/components/NicknameForm";
 import { RoomSidebar } from "@/components/RoomSidebar";
 import { VideoGrid } from "@/components/VideoGrid";
 import { useRoomContext } from "@/context/RoomContext";
-// Import the mediasoup hook
+// MediaSoup hook for WebRTC video streaming
 import { useVideoTracks } from "@/hooks/useVideoTracks";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -34,11 +34,11 @@ export default function Room() {
     updateParticipantPosition
   } = useVideoTracks();
   
-  // Track video devices
+  // Get video device information from the hook
   const [videoDevices, setVideoDevices] = useState<MediaDeviceInfo[]>([]);
   const [selectedDeviceId, setSelectedDeviceId] = useState<string | null>(null);
   
-  // Get video devices
+  // Get video devices and track changes
   useEffect(() => {
     async function getDevices() {
       try {
@@ -55,6 +55,7 @@ export default function Room() {
       }
     }
     
+    // Initial device enumeration
     getDevices();
     
     // Set up device change listener
@@ -71,12 +72,32 @@ export default function Room() {
     await selectCamera(deviceId);
   };
   
-  // Connect to mediasoup on room join
+  // Track connection status to avoid multiple connect/disconnect cycles
+  const [isConnecting, setIsConnecting] = useState(false);
+  const [isConnected, setIsConnected] = useState(false);
+  
+  // Connect to mediasoup on room join - only once when requirements are met
   useEffect(() => {
-    if (token && userId && nickname && !showNicknameForm) {
+    // Only connect if not already connected or connecting, and we have all required info
+    if (token && userId && nickname && !showNicknameForm && !isConnecting && !isConnected) {
+      console.log('Connecting to room with mediasoup...', { token, userId, nickname });
+      
+      // Set connecting flag to prevent multiple connect attempts
+      setIsConnecting(true);
+      
       connectToMediasoup(token, userId, nickname)
+        .then(() => {
+          console.log('Successfully connected to mediasoup');
+          setIsConnected(true);
+          setIsConnecting(false);
+          
+          // Start local video after connection is established
+          return toggleVideo();
+        })
         .catch(error => {
           console.error('Error connecting to video server:', error);
+          setIsConnecting(false);
+          
           toast({
             title: "Connection error",
             description: "Could not connect to video server. Please try again.",
@@ -84,7 +105,7 @@ export default function Room() {
           });
         });
     }
-  }, [token, userId, nickname, showNicknameForm, connectToMediasoup, toast]);
+  }, [token, userId, nickname, showNicknameForm, isConnecting, isConnected, connectToMediasoup, toggleVideo, toast]);
   
   // Check if room exists on initial load
   useEffect(() => {
@@ -126,15 +147,23 @@ export default function Room() {
     setShowNicknameForm(false);
   }, [setNickname]);
 
-  // Update room state when mediasoup participants change
+  // Update room state when mediasoup participants change with special handling for local participant
   useEffect(() => {
-    if (mediasoupParticipants.length > 0) {
-      setRoomState({
-        token,
-        participants: mediasoupParticipants
-      });
+    console.log('Room received participants update:', mediasoupParticipants);
+    
+    // Always update with the latest participants data
+    setRoomState({
+      token,
+      participants: mediasoupParticipants
+    });
+    
+    // If we have local video but no participants, ensure we're added to the participants list
+    if (mediasoupParticipants.length > 0 || hasVideoEnabled) {
+      console.log('Video state changed, updating room state with all participants');
+    } else {
+      console.log('No participants yet and no local video');
     }
-  }, [mediasoupParticipants, token, setRoomState]);
+  }, [mediasoupParticipants, token, setRoomState, hasVideoEnabled]);
 
   // Handle video toggle
   const handleToggleVideo = useCallback(() => {
