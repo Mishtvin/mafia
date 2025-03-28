@@ -42,7 +42,7 @@ class MafiaRoom {
   }
 
   /**
-   * Get all participants in the room
+   * Get all participants in the room 
    */
   getParticipants(): Map<string, Participant> {
     return this.participants;
