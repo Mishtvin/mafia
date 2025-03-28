@@ -30,6 +30,16 @@ export function VideoGrid() {
       return { videos: [], emptySlots: Array(12).fill(null).map((_, i) => i) };
     }
     
+    // Расширенное логирование для отладки
+    console.log('[VideoGrid] Rendering with participants:', 
+      roomState.participants.map(p => ({
+        id: p.userId,
+        nickname: p.nickname, 
+        position: p.position,
+        hasVideo: p.hasVideo
+      }))
+    );
+    
     // Log for debugging
     console.log('Rendering VideoGrid with participants:', roomState.participants);
     

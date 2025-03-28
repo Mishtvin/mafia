@@ -17,6 +17,11 @@ const LOG_THROTTLE_MS: Record<string, number> = {
   error: 0       // Never throttle errors
 };
 
+// Store the most recent logs in memory for faster access through the API
+// This avoids having to read the log file for every request
+const MAX_IN_MEMORY_LOGS = 1000;
+const inMemoryLogs: string[] = [];
+
 // Ensure logs directory exists
 const logsDir = path.join(process.cwd(), 'logs');
 if (!fs.existsSync(logsDir)) {
@@ -28,16 +33,26 @@ const logFile = path.join(logsDir, 'server.log');
 
 // Clear existing log file on server start
 fs.writeFileSync(logFile, `=== Server Started ${new Date().toISOString()} ===\n`);
+// Add first log to memory
+inMemoryLogs.push(`=== Server Started ${new Date().toISOString()} ===`);
 
 // Internal logging function
 // Reduce log verbosity in console by only showing a small percentage of logs
 // This helps keep the console clean while still logging everything to files
 function _writeToLog(message: string, includeConsole = false) {
   const timestamp = new Date().toISOString();
-  const logMessage = `[${timestamp}] ${message}\n`;
+  const logMessage = `[${timestamp}] ${message}`;
+  const fileLogMessage = logMessage + '\n';
   
   // Append to log file
-  fs.appendFileSync(logFile, logMessage);
+  fs.appendFileSync(logFile, fileLogMessage);
+  
+  // Add to in-memory logs
+  inMemoryLogs.push(logMessage);
+  // Keep in-memory logs capped to avoid memory issues
+  if (inMemoryLogs.length > MAX_IN_MEMORY_LOGS) {
+    inMemoryLogs.shift(); // Remove oldest log
+  }
   
   // Only log to console very selectively to reduce clutter
   // We always write to log files, but console output is minimal
@@ -126,6 +141,55 @@ export function createLogger(category: string) {
     log: (message: string, data?: any, force = false) => log(category, message, data, force, false),
     error: (message: string, error: Error | unknown) => logError(`[${category}] ${message}`, error)
   };
+}
+
+/**
+ * Get the recent logs from memory
+ * @param limit Number of logs to retrieve (defaults to all in-memory logs)
+ * @param filter Optional filter string to find specific logs
+ */
+export function getRecentLogs(limit = MAX_IN_MEMORY_LOGS, filter?: string): string[] {
+  if (filter) {
+    const filterLower = filter.toLowerCase();
+    const filtered = inMemoryLogs.filter(log => log.toLowerCase().includes(filterLower));
+    return filtered.slice(-limit);
+  }
+  return inMemoryLogs.slice(-limit);
+}
+
+/**
+ * Get logs from file with more options
+ * @param options Optional parameters for retrieving logs
+ */
+export function getLogsFromFile(options: {
+  limit?: number;
+  filter?: string;
+  tail?: boolean; // If true, returns the last N lines
+} = {}): string[] {
+  try {
+    const { limit = 1000, filter, tail = true } = options;
+    
+    // Read the file
+    const content = fs.readFileSync(logFile, 'utf8');
+    const lines = content.split('\n').filter(line => line.trim());
+    
+    // Apply filters
+    let result = lines;
+    if (filter) {
+      const filterLower = filter.toLowerCase();
+      result = result.filter(line => line.toLowerCase().includes(filterLower));
+    }
+    
+    // Apply tail or head
+    if (tail) {
+      return result.slice(-limit);
+    } else {
+      return result.slice(0, limit);
+    }
+  } catch (error) {
+    console.error('Error reading log file:', error);
+    return ['Error reading log file'];
+  }
 }
 
 // Create some preset loggers

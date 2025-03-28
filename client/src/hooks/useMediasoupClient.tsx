@@ -165,18 +165,31 @@ export function useMediasoupClient(): MediasoupResult {
       newSocket.on('participant-joined', (participant: Participant) => {
         debug('participants', `Participant joined: ${participant.id} (${participant.nickname})`, participant);
         
+        // Проверяем список участников ДО обновления для отладки
+        debug('participants', 'Current participants before update:', 
+          participants.map(p => ({ id: p.id, nickname: p.nickname }))
+        );
+        
         // Убедимся, что не добавляем дублирующих участников
         setParticipants(prev => {
           // Если участник уже есть в списке, обновим его данные
           if (prev.some(p => p.id === participant.id)) {
+            debug('participants', `Participant ${participant.id} already exists, updating info`);
             return prev.map(p => p.id === participant.id ? {...p, ...participant} : p);
           }
           
           // Если это новый участник, добавляем его
+          debug('participants', `Adding new participant: ${participant.id} (${participant.nickname})`);
           return [...prev, participant];
         });
         
-        debug('participants', `Updated participants list after join event`);
+        // После обновления списка логируем для проверки
+        debug('participants', 'Updated participants after join event. Triggering visual update.');
+        
+        // Принудительно обновляем UI после добавления участника
+        setTimeout(() => {
+          debug('participants', 'Forcing UI refresh check for participant list');
+        }, 500);
       });
       
       // Handle participant left

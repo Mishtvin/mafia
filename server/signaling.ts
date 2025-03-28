@@ -72,11 +72,27 @@ export function registerSignalingEvents(io: SocketIOServer, socket: Socket): voi
   socket.on('join-room', async (request: JoinRoomRequest, callback) => {
     try {
       // Add detailed logging for debugging
-      signalingLogger.log(`Join room request: ${JSON.stringify(request)}`);
+      signalingLogger.log(`Join room request: ${JSON.stringify(request)}`, null, true);
       
       // Store the userId as the participantId for this socket connection
       participantId = request.userId;
-      signalingLogger.log(`Set participantId to ${participantId} for socket ${socket.id}`);
+
+      // Также сохраняем ID пользователя в данных сокета для определения активных соединений
+      socket.data.participantId = request.userId;
+      socket.data.userId = request.userId;
+      socket.data.nickname = request.nickname;
+      
+      signalingLogger.log(`Set participantId to ${participantId} for socket ${socket.id}`, null, true);
+      
+      // Выводим информацию о всех активных соединениях для отладки
+      const activeSockets = Array.from(io.sockets.sockets.values());
+      signalingLogger.log(`Active connections: ${activeSockets.length}`, 
+        activeSockets.map(s => ({ 
+          id: s.id, 
+          participantId: s.data.participantId,
+          connected: s.connected
+        }))
+      );
       
       const participant = await mafiaRoom.addParticipant(request.userId, request.nickname);
       signalingLogger.log(`Added participant: ${JSON.stringify(participant)}`);
@@ -87,7 +103,7 @@ export function registerSignalingEvents(io: SocketIOServer, socket: Socket): voi
       
       // Send the current participants to the new participant
       const participants = mafiaRoom.getParticipantsInfo();
-      signalingLogger.log(`Current participants: ${JSON.stringify(participants)}`);
+      signalingLogger.log(`Current participants: ${JSON.stringify(participants)}`, null, true);
       
       callback({
         success: true,
@@ -103,6 +119,15 @@ export function registerSignalingEvents(io: SocketIOServer, socket: Socket): voi
       });
 
       signalingLogger.log(`Participant ${request.userId} joined the room successfully`);
+      
+      // Проверяем, доставлено ли уведомление другим клиентам
+      setTimeout(() => {
+        signalingLogger.log(`Socket room membership check:`, {
+          roomName: mafiaRoom.getRoomName(),
+          socketCount: io.sockets.adapter.rooms.get(mafiaRoom.getRoomName())?.size || 0,
+          socketIds: Array.from(io.sockets.adapter.rooms.get(mafiaRoom.getRoomName()) || new Set())
+        }, true);
+      }, 500);
     } catch (error) {
       callback(handleError('Error joining room', error));
     }
