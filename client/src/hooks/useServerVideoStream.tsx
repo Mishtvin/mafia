@@ -35,7 +35,8 @@ export function useServerVideoStream(roomToken: string, userId: string) {
   const [hasVideoEnabled, setHasVideoEnabled] = useState(false);
   const frameIdCounter = useRef(0);
   const animationFrameRef = useRef<number | null>(null);
-  
+  const lastReceivedChunkFromUser = useRef<Record<string, boolean>>({});
+
   // Get Socket.IO connection
   const { 
     isConnected,
@@ -54,14 +55,14 @@ export function useServerVideoStream(roomToken: string, userId: string) {
     const handleNewStream = (data: VideoStreamMetadata) => {
       const { userId: streamUserId, width, height, frameRate } = data;
 
-      console.log(`[VIDEO] New stream available from ${streamUserId}: ${width}x${height}@${frameRate}fps`);
-      
+      // Skip if it's our own stream
       if (streamUserId === userId) {
-        // This is our own stream coming back from the server
         // No special handling needed
         console.log('[VIDEO] Received my own stream notification from server');
         return;
       }
+      
+      console.log(`[VIDEO-CRITICAL] New remote stream detected from ${streamUserId} with dimensions ${width}x${height}`);
       
       // Create a MediaStream for this remote participant
       const stream = new MediaStream();
@@ -85,11 +86,17 @@ export function useServerVideoStream(roomToken: string, userId: string) {
     
     // Handle video chunk from server
     const handleVideoChunk = (data: any) => {
-      const { userId: chunkUserId, frameId, timestamp } = data;
+      const { userId: chunkUserId, frameId, timestamp, data: videoData } = data;
       
       if (chunkUserId === userId) {
         // No need to process our own video chunks
         return;
+      }
+      
+      // On first chunk received, log it clearly
+      if (!lastReceivedChunkFromUser.current[chunkUserId]) {
+        console.log(`[VIDEO-CRITICAL] Received first video chunk from ${chunkUserId}, size: ${videoData?.length || 0} bytes`);
+        lastReceivedChunkFromUser.current[chunkUserId] = true;
       }
       
       // Keep track of active streams
@@ -135,7 +142,7 @@ export function useServerVideoStream(roomToken: string, userId: string) {
       }
       
       // Log heartbeat frames for debugging
-      if (frameId && frameId % 100 === 0) {
+      if (frameId && frameId % 300 === 0) {
         console.log(`[VIDEO] Received heartbeat frame #${frameId} from ${chunkUserId}`);
       }
     };
@@ -409,6 +416,8 @@ export function useServerVideoStream(roomToken: string, userId: string) {
     const frameRate = settings.frameRate || 15;
     
     // Start streaming to server
+    console.log(`[VIDEO-CRITICAL] Starting to send video stream to server for user ${userId}`);
+    
     socket.emit('video:start', {
       roomToken,
       userId,
@@ -461,34 +470,32 @@ export function useServerVideoStream(roomToken: string, userId: string) {
           // This is much more efficient than sending raw pixel data
           const imageData = canvas.toDataURL('image/jpeg', canvasConfig.quality);
           
-          // Log the size of data for debugging
-          if (frameId % 60 === 0) {
-            console.log(`[VIDEO] Sending frame #${frameId} - data size: ${Math.round(imageData.length / 1024)}kb`);
+          // Log frame transfer every ~5 seconds
+          if (frameId % 75 === 0) {
+            console.log(`[VIDEO] Sending frame #${frameId} to server, dimensions: ${width}x${height}`);
           }
-
-          // Always send full image - this is more reliable for testing
-          // For every X frames, send a full image to all participants
-          if (frameId % 10 === 0) {
-            // Send the image as a separate event that's optimized for images
-            socket.emit('video:image', {
-              roomToken,
-              userId,
-              image: imageData,
-              timestamp: Date.now(),
-              frameId
-            });
-          } else {
-            // Send a small ping to keep the connection active
+          
+          // Only send a real frame every 100ms (limiting to 10fps to reduce bandwidth for testing)
+          if (frameId % 3 === 0) {
+            // Here we'd compress and send actual video data
+            // This is placeholder implementation
+            const simulatedData = new Uint8Array(10000); // Increased size to simulate real data
+            
             socket.emit('video:chunk', {
               roomToken,
               userId,
               timestamp: Date.now(),
-              data: new Uint8Array(4), // Just a heartbeat
+              data: simulatedData,
               frameId
             });
+            
+            // Every 10 seconds log a confirmation that we're sending data
+            if (frameId % 300 === 0) {
+              console.log(`[VIDEO-CRITICAL] Still sending video data, frame #${frameId}, size: ${simulatedData.length} bytes`);
+            }
           }
         } catch (err) {
-          console.error('[VIDEO] Error capturing frame:', err);
+          console.error('[VIDEO] Error capturing/sending frame:', err);
         }
         
         lastFrameTime = now;
