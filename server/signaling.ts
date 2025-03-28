@@ -94,12 +94,23 @@ export function registerSignalingEvents(io: SocketIOServer, socket: Socket): voi
         }))
       );
       
+      // Получаем имя комнаты до добавления участника
+      const roomName = mafiaRoom.getRoomName();
+      
+      // Проверяем, уже в комнате ли сокет
+      const isInRoom = socket.rooms.has(roomName);
+      if (isInRoom) {
+        signalingLogger.log(`Socket ${socket.id} already in room ${roomName}`, null, true);
+      }
+      
       const participant = await mafiaRoom.addParticipant(request.userId, request.nickname);
       signalingLogger.log(`Added participant: ${JSON.stringify(participant)}`);
       
-      // Join the socket to the room
-      socket.join(mafiaRoom.getRoomName());
-      signalingLogger.log(`Socket ${socket.id} joined room ${mafiaRoom.getRoomName()}`);
+      // Join the socket to the room - обеспечиваем присоединение к комнате Socket.IO
+      if (!isInRoom) {
+        socket.join(roomName);
+        signalingLogger.log(`Socket ${socket.id} joined room ${roomName}`, null, true);
+      }
       
       // Send the current participants to the new participant
       const participants = mafiaRoom.getParticipantsInfo();
@@ -110,22 +121,23 @@ export function registerSignalingEvents(io: SocketIOServer, socket: Socket): voi
         participants: participants
       });
       
-      // Notify all other participants
-      socket.to(mafiaRoom.getRoomName()).emit('participant-joined', {
+      // Inform other participants in the room through a Socket.IO broadcast
+      socket.to(roomName).emit('participant-joined', {
         id: participant.id,
         nickname: participant.nickname,
         position: participant.position,
         hasVideo: participant.hasVideo
       });
 
-      signalingLogger.log(`Participant ${request.userId} joined the room successfully`);
+      signalingLogger.log(`Participant ${request.userId} joined the room successfully and others were notified`);
       
       // Проверяем, доставлено ли уведомление другим клиентам
       setTimeout(() => {
+        const roomMembers = io.sockets.adapter.rooms.get(roomName);
         signalingLogger.log(`Socket room membership check:`, {
-          roomName: mafiaRoom.getRoomName(),
-          socketCount: io.sockets.adapter.rooms.get(mafiaRoom.getRoomName())?.size || 0,
-          socketIds: Array.from(io.sockets.adapter.rooms.get(mafiaRoom.getRoomName()) || new Set())
+          roomName: roomName,
+          socketCount: roomMembers?.size || 0,
+          socketIds: Array.from(roomMembers || new Set())
         }, true);
       }, 500);
     } catch (error) {

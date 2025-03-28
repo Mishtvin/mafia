@@ -96,7 +96,7 @@ export function useMediasoupClient(): MediasoupResult {
       // Create new socket connection
       debug('connect', 'Creating new Socket.IO connection');
       const newSocket = io('/', {
-        query: { roomToken, userId },
+        query: { roomToken, userId }
       });
       
       socketRef.current = newSocket;
@@ -107,7 +107,7 @@ export function useMediasoupClient(): MediasoupResult {
       
       // Socket event listeners
       newSocket.on('connect', () => {
-        debug('socket', 'Connected to signaling server');
+        debug('socket', `Socket connected with ID: ${newSocket.id}`);
         
         // Join the room
         setTimeout(() => {
@@ -124,6 +124,13 @@ export function useMediasoupClient(): MediasoupResult {
               
               if (response && response.success) {
                 debug('socket', `Setting ${response.participants?.length || 0} participants`);
+                
+                // Debug the participant list we received before setting
+                debug('participants', 'Initial participants list:', 
+                  (response.participants || []).map((p: any) => ({ id: p.id, nickname: p.nickname }))
+                );
+                
+                // Set participants list, ensuring it's an array
                 setParticipants(response.participants || []);
                 
                 // Load device with router RTP capabilities
@@ -153,12 +160,6 @@ export function useMediasoupClient(): MediasoupResult {
             });
           });
         }, 500); // Small delay to ensure socket connection is stable
-      });
-      
-      // Handle connection error
-      newSocket.on('connect_error', (error) => {
-        debug('socket', 'Connection error', error);
-        setState(prev => ({ ...prev, error: 'Connection error' }));
       });
       
       // Handle participant joined
