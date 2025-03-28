@@ -85,37 +85,66 @@ export function useServerVideoStream(roomToken: string, userId: string) {
     
     // Handle video chunk from server
     const handleVideoChunk = (data: any) => {
-      const { userId: chunkUserId, frameId } = data;
+      const { userId: chunkUserId, frameId, timestamp } = data;
       
       if (chunkUserId === userId) {
         // No need to process our own video chunks
         return;
       }
       
+      // Keep track of active streams
+      activeStreams.set(chunkUserId, true);
+      
       // Update the remote stream active status just to keep it marked as "alive"
       const currentStream = remoteStreams.get(chunkUserId);
-      if (currentStream && !currentStream.active) {
+      if (currentStream) {
+        // Always update the lastUpdateTime to prevent timeouts
         setRemoteStreams(prev => {
           const newMap = new Map(prev);
           const stream = newMap.get(chunkUserId);
           if (stream) {
-            newMap.set(chunkUserId, { ...stream, active: true });
+            newMap.set(chunkUserId, { 
+              ...stream, 
+              active: true,
+              lastUpdateTime: timestamp || Date.now()
+            });
           }
+          return newMap;
+        });
+      } else {
+        // If we don't have a stream yet but are receiving chunks,
+        // this means the initialization message was lost or delayed.
+        // Set up a minimal stream to display something.
+        console.log(`[VIDEO] Creating placeholder stream for user ${chunkUserId} who is sending chunks`);
+        
+        // Create a placeholder stream
+        const newStream = new MediaStream();
+        const placeholderTrack = createEmptyVideoTrack(320, 240);
+        newStream.addTrack(placeholderTrack);
+        
+        setRemoteStreams(prev => {
+          const newMap = new Map(prev);
+          newMap.set(chunkUserId, {
+            userId: chunkUserId,
+            stream: newStream,
+            active: true,
+            lastUpdateTime: timestamp || Date.now()
+          });
           return newMap;
         });
       }
       
-      // For development/debugging purposes
-      if (frameId && frameId % 30 === 0) {
-        console.log(`[VIDEO] Received frame #${frameId} from ${chunkUserId}`);
+      // Log heartbeat frames for debugging
+      if (frameId && frameId % 100 === 0) {
+        console.log(`[VIDEO] Received heartbeat frame #${frameId} from ${chunkUserId}`);
       }
     };
     
     // Handle image frame from server
-    const handleVideoImage = (data: { userId: string, image: string, timestamp: number }) => {
-      const { userId: imageUserId, image, timestamp } = data;
+    const handleVideoImage = (data: { userId: string, image: string, timestamp: number, frameId?: number }) => {
+      const { userId: imageUserId, image, timestamp, frameId } = data;
       
-      console.log(`[VIDEO] Received image frame from ${imageUserId} at ${new Date(timestamp).toISOString()}`);
+      console.log(`[VIDEO] Received image frame #${frameId || 'unknown'} from ${imageUserId} at ${new Date(timestamp).toISOString()}`);
       
       if (imageUserId === userId) {
         // No need to process our own video image
@@ -123,69 +152,103 @@ export function useServerVideoStream(roomToken: string, userId: string) {
       }
       
       // Get the remote stream for this user
-      const currentStream = remoteStreams.get(imageUserId);
+      let currentStream = remoteStreams.get(imageUserId);
+      
+      // If we don't have a stream for this user yet, create one
       if (!currentStream) {
-        console.log(`[VIDEO] Cannot update image for ${imageUserId} - no stream found`);
-        return;
+        console.log(`[VIDEO] Creating new stream for user ${imageUserId}`);
+        const newStream = new MediaStream();
+        // Create a placeholder track initially
+        const videoTrack = createEmptyVideoTrack(320, 240);
+        newStream.addTrack(videoTrack);
+        
+        // Add to remote streams map
+        // Create a properly typed VideoStream object
+        currentStream = {
+          userId: imageUserId,
+          stream: newStream,
+          active: true,
+          lastUpdateTime: Date.now()
+        };
+        
+        // Use a non-null assertion since we just created the object
+        setRemoteStreams(prev => {
+          const newMap = new Map(prev);
+          // We've just created currentStream above, so we know it's not undefined
+          newMap.set(imageUserId, currentStream!);
+          return newMap;
+        });
       }
       
       try {
         // Create an HTML Image element to load the frame
         const imageElement = new Image();
+        
+        // Log the image data size
+        if (frameId && frameId % 60 === 0) {
+          console.log(`[VIDEO] Received frame #${frameId} - data size: ${Math.round(image.length / 1024)}kb`);
+        }
+        
         imageElement.onload = () => {
           // Create a canvas to draw the image
           const canvas = document.createElement('canvas');
-          canvas.width = imageElement.width;
-          canvas.height = imageElement.height;
+          canvas.width = imageElement.width || 320;
+          canvas.height = imageElement.height || 240;
           
           // Draw the image to the canvas
           const ctx = canvas.getContext('2d');
           if (!ctx) return;
           ctx.drawImage(imageElement, 0, 0);
           
-          // If we have a MediaStream with a video track, update it
-          if (currentStream.stream) {
-            // Get the video element that this track is connected to
-            const videoElements = document.querySelectorAll('video');
-            // Convert NodeList to Array for TypeScript compatibility
-            const videoElementsArray = Array.from(videoElements);
-            let found = false;
+          // Try the new approach - create a fresh stream from the canvas for each frame
+          try {
+            // Create a new stream from this canvas
+            // @ts-ignore - captureStream is not in the TS types but supported in browsers
+            const newStream = canvas.captureStream(15);
+            const newVideoTrack = newStream.getVideoTracks()[0];
             
-            for (let i = 0; i < videoElementsArray.length; i++) {
-              const videoEl = videoElementsArray[i];
-              // Find the video element that has this stream as source
-              if (videoEl.srcObject === currentStream.stream) {
-                found = true;
-                // Update the pixels of the video with the new image
-                ctx.drawImage(imageElement, 0, 0, canvas.width, canvas.height);
-                
-                // This is a hack to update the video frame by drawing directly to it
-                try {
-                  // @ts-ignore - getContext is not in the standard API but works in modern browsers
-                  const videoCtx = videoEl.getContext('2d');
-                  if (videoCtx) {
-                    videoCtx.drawImage(imageElement, 0, 0, videoEl.width, videoEl.height);
-                  }
-                } catch (e) {
-                  console.warn('[VIDEO] Cannot update video pixel data directly:', e);
-                  
-                  // Alternative: create a new stream with this image
-                  // @ts-ignore - captureStream is not in the TS types but supported in browsers
-                  const newStream = canvas.captureStream();
-                  const videoTrack = newStream.getVideoTracks()[0];
-                  
-                  if (videoTrack) {
-                    // Replace the track in the existing stream
-                    const oldTracks = currentStream.stream.getVideoTracks();
-                    oldTracks.forEach(track => {
-                      currentStream.stream.removeTrack(track);
-                      track.stop();
-                    });
-                    currentStream.stream.addTrack(videoTrack);
-                  }
-                }
-                break; // We found the video element, no need to continue
+            if (newVideoTrack && currentStream.stream) {
+              // Replace all existing tracks with the new one
+              const oldTracks = currentStream.stream.getVideoTracks();
+              oldTracks.forEach(track => {
+                currentStream.stream.removeTrack(track);
+                track.stop();
+              });
+              
+              // Add the new track
+              currentStream.stream.addTrack(newVideoTrack);
+              
+              // Log success
+              if (frameId && frameId % 60 === 0) {
+                console.log(`[VIDEO] Successfully updated video track for user ${imageUserId} (frame #${frameId})`);
               }
+            }
+          } catch (err) {
+            console.error('[VIDEO] Error creating stream from canvas:', err);
+            
+            // Fall back to finding and updating the video element directly
+            try {
+              // Find the video element for this stream
+              const videoElements = document.querySelectorAll('video');
+              const videoElementsArray = Array.from(videoElements);
+              
+              for (let i = 0; i < videoElementsArray.length; i++) {
+                const videoEl = videoElementsArray[i];
+                if (videoEl.srcObject === currentStream.stream) {
+                  // Try to set a new source if we can't update the existing one
+                  // @ts-ignore
+                  if (typeof videoEl.getContext !== 'function') {
+                    const newVideoStream = canvas.captureStream(15);
+                    videoEl.srcObject = newVideoStream;
+                    
+                    // Update our reference
+                    currentStream.stream = newVideoStream;
+                  }
+                  break;
+                }
+              }
+            } catch (e) {
+              console.error('[VIDEO] Fallback method also failed:', e);
             }
           }
           
@@ -199,6 +262,11 @@ export function useServerVideoStream(roomToken: string, userId: string) {
             });
             return newMap;
           });
+        };
+        
+        // Set error handler
+        imageElement.onerror = (err) => {
+          console.error('[VIDEO] Error loading image:', err);
         };
         
         // Trigger the image load
@@ -242,7 +310,7 @@ export function useServerVideoStream(roomToken: string, userId: string) {
           
           // Only update for remote participants
           if (p.userId !== userId && remoteStream) {
-            const isActive = p.hasVideo && activeStreams.has(p.userId);
+            const isActive = p.hasVideo && activeStreams.get(p.userId);
             
             // If video status or active state needs to be updated
             if (remoteStream.active !== isActive) {
@@ -393,13 +461,21 @@ export function useServerVideoStream(roomToken: string, userId: string) {
           // This is much more efficient than sending raw pixel data
           const imageData = canvas.toDataURL('image/jpeg', canvasConfig.quality);
           
-          // For every 30th frame, send a full image
-          if (frameId % 30 === 0) {
+          // Log the size of data for debugging
+          if (frameId % 60 === 0) {
+            console.log(`[VIDEO] Sending frame #${frameId} - data size: ${Math.round(imageData.length / 1024)}kb`);
+          }
+
+          // Always send full image - this is more reliable for testing
+          // For every X frames, send a full image to all participants
+          if (frameId % 10 === 0) {
             // Send the image as a separate event that's optimized for images
             socket.emit('video:image', {
               roomToken,
               userId,
-              image: imageData
+              image: imageData,
+              timestamp: Date.now(),
+              frameId
             });
           } else {
             // Send a small ping to keep the connection active
@@ -407,7 +483,7 @@ export function useServerVideoStream(roomToken: string, userId: string) {
               roomToken,
               userId,
               timestamp: Date.now(),
-              data: new Uint8Array(4), // Minimal data for non-keyframes
+              data: new Uint8Array(4), // Just a heartbeat
               frameId
             });
           }
