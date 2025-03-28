@@ -364,7 +364,7 @@ export default function Room() {
                 Camera:
               </label>
               <Select
-                value={selectedDeviceId || "no-camera"}
+                value={selectedDeviceId ? selectedDeviceId : "no-camera"}
                 onValueChange={switchCamera}
                 disabled={videoDevices.length === 0}
               >
@@ -375,11 +375,15 @@ export default function Room() {
                   {videoDevices.length === 0 ? (
                     <SelectItem value="no-camera">No cameras detected</SelectItem>
                   ) : (
-                    videoDevices.map(device => (
-                      <SelectItem key={device.deviceId} value={device.deviceId || "camera-id-missing"}>
-                        {device.label || `Camera ${device.deviceId?.slice(0, 5) || "unknown"}...`}
-                      </SelectItem>
-                    ))
+                    videoDevices.map(device => {
+                      // Ensure the device ID is never an empty string
+                      const deviceId = device.deviceId || `camera-id-${Math.random().toString(36).substr(2, 9)}`;
+                      return (
+                        <SelectItem key={deviceId} value={deviceId}>
+                          {device.label || `Camera ${deviceId.slice(0, 5)}...`}
+                        </SelectItem>
+                      );
+                    })
                   )}
                 </SelectContent>
               </Select>

@@ -142,11 +142,17 @@ export function useServerVideoStream(roomToken: string, userId: string) {
     
     // Enhanced image frame handler from server
     const handleVideoImage = (data: { userId: string, image: string, timestamp: number, frameId?: number }) => {
+      // Guard against invalid data
+      if (!data || !data.userId || !data.image) {
+        console.error('[VIDEO] Received invalid video image data:', data);
+        return;
+      }
+      
       const { userId: imageUserId, image, timestamp, frameId } = data;
       
       // Only log occasionally to reduce console spam
       if (frameId && frameId % 60 === 0) {
-        console.log(`[VIDEO] Received image frame #${frameId} from ${imageUserId} at ${new Date(timestamp).toISOString()}`);
+        console.log(`[VIDEO] Received image frame #${frameId} from ${imageUserId} at ${new Date(timestamp || Date.now()).toISOString()}`);
       }
       
       if (imageUserId === userId) {
@@ -184,6 +190,12 @@ export function useServerVideoStream(roomToken: string, userId: string) {
       }
       
       try {
+        // Validate image data format to prevent errors
+        if (!image.startsWith('data:image')) {
+          console.error('[VIDEO] Invalid image data format received');
+          return;
+        }
+        
         // Create an HTML Image element to load the frame
         const imageElement = new Image();
         
@@ -192,8 +204,18 @@ export function useServerVideoStream(roomToken: string, userId: string) {
           console.log(`[VIDEO] Received frame #${frameId} - data size: ${Math.round(image.length / 1024)}kb`);
         }
         
+        // Set a load timeout to prevent hanging if image loading stalls
+        const loadTimeout = setTimeout(() => {
+          console.warn('[VIDEO] Image load timeout for user', imageUserId);
+          // Clear handlers to prevent any delayed processing
+          imageElement.onload = null;
+          imageElement.onerror = null;
+        }, 5000);
+        
         // Set up the onload handler before setting the src
         imageElement.onload = () => {
+          clearTimeout(loadTimeout);
+          
           // Create a canvas to draw the image
           const canvas = document.createElement('canvas');
           canvas.width = imageElement.width || 320;
@@ -206,50 +228,65 @@ export function useServerVideoStream(roomToken: string, userId: string) {
             return;
           }
           
-          // Draw the image to the canvas
-          ctx.drawImage(imageElement, 0, 0);
-          
           try {
+            // Draw the image to the canvas - wrap in try/catch to handle potential errors
+            ctx.drawImage(imageElement, 0, 0);
+            
             // Method 1: Create a new captureStream from the canvas
-            // @ts-ignore - captureStream is not in the TS types but supported in browsers
-            const newStream = canvas.captureStream(15);
-            if (!newStream || !newStream.getVideoTracks || newStream.getVideoTracks().length === 0) {
-              throw new Error('Failed to create valid stream from canvas');
-            }
-            
-            const newVideoTrack = newStream.getVideoTracks()[0];
-            
-            // Update the existing stream with the new track
-            if (newVideoTrack && currentStream.stream) {
-              // Remove old tracks first
-              const oldTracks = currentStream.stream.getVideoTracks();
-              oldTracks.forEach(track => {
-                currentStream.stream.removeTrack(track);
-                track.stop();
-              });
-              
-              // Add the new track
-              currentStream.stream.addTrack(newVideoTrack);
-              
-              // Log success occasionally
-              if (frameId && frameId % 120 === 0) {
-                console.log(`[VIDEO] Successfully updated video track for user ${imageUserId} (frame #${frameId})`);
+            try {
+              // @ts-ignore - captureStream is not in the TS types but supported in browsers
+              const newStream = canvas.captureStream(15);
+              if (!newStream || !newStream.getVideoTracks || newStream.getVideoTracks().length === 0) {
+                throw new Error('Failed to create valid stream from canvas');
               }
+              
+              const newVideoTrack = newStream.getVideoTracks()[0];
+              
+              // Update the existing stream with the new track
+              if (newVideoTrack && currentStream.stream) {
+                // Remove old tracks first
+                const oldTracks = currentStream.stream.getVideoTracks();
+                oldTracks.forEach(track => {
+                  try {
+                    currentStream.stream.removeTrack(track);
+                    track.stop();
+                  } catch (trackErr) {
+                    console.warn('[VIDEO] Error removing track:', trackErr);
+                  }
+                });
+                
+                // Add the new track
+                try {
+                  currentStream.stream.addTrack(newVideoTrack);
+                  
+                  // Log success occasionally
+                  if (frameId && frameId % 120 === 0) {
+                    console.log(`[VIDEO] Successfully updated video track for user ${imageUserId} (frame #${frameId})`);
+                  }
+                  
+                  // Update the stream in our state map
+                  setRemoteStreams(prev => {
+                    const newMap = new Map(prev);
+                    newMap.set(imageUserId, { 
+                      ...currentStream, 
+                      stream: currentStream.stream,  // Use the updated stream
+                      active: true,
+                      lastUpdateTime: Date.now()
+                    });
+                    return newMap;
+                  });
+                  
+                  // Primary method succeeded, skip the fallback
+                  return;
+                } catch (addTrackErr) {
+                  console.error('[VIDEO] Error adding track to stream:', addTrackErr);
+                  // Continue to fallback method
+                }
+              }
+            } catch (err) {
+              console.error('[VIDEO] Primary method failed:', err);
+              // Continue to fallback method
             }
-            
-            // Update the stream in our state map
-            setRemoteStreams(prev => {
-              const newMap = new Map(prev);
-              newMap.set(imageUserId, { 
-                ...currentStream, 
-                stream: currentStream.stream,  // Use the updated stream
-                active: true,
-                lastUpdateTime: Date.now()
-              });
-              return newMap;
-            });
-          } catch (err) {
-            console.error('[VIDEO] Primary method failed:', err);
             
             // Method 2: Try finding the video element directly
             try {
@@ -284,12 +321,29 @@ export function useServerVideoStream(roomToken: string, userId: string) {
             } catch (e) {
               console.error('[VIDEO] All methods failed:', e);
             }
+          } catch (drawErr) {
+            console.error('[VIDEO] Error drawing image to canvas:', drawErr);
           }
         };
         
         // Set error handler
         imageElement.onerror = (err) => {
+          clearTimeout(loadTimeout);
           console.error('[VIDEO] Error loading image:', err);
+          
+          // Still update the lastUpdateTime to prevent timeouts
+          setRemoteStreams(prev => {
+            const newMap = new Map(prev);
+            const stream = newMap.get(imageUserId);
+            if (stream) {
+              newMap.set(imageUserId, { 
+                ...stream, 
+                active: true,
+                lastUpdateTime: Date.now() 
+              });
+            }
+            return newMap;
+          });
         };
         
         // Handle cross-origin issues
@@ -299,6 +353,20 @@ export function useServerVideoStream(roomToken: string, userId: string) {
         imageElement.src = image;
       } catch (err) {
         console.error('[VIDEO] Error processing image frame:', err);
+        
+        // Update the lastUpdateTime even on error to keep the connection alive
+        setRemoteStreams(prev => {
+          const newMap = new Map(prev);
+          const stream = newMap.get(imageUserId);
+          if (stream) {
+            newMap.set(imageUserId, { 
+              ...stream, 
+              active: true,
+              lastUpdateTime: Date.now() 
+            });
+          }
+          return newMap;
+        });
       }
     };
     
@@ -379,6 +447,7 @@ export function useServerVideoStream(roomToken: string, userId: string) {
       try {
         console.log('[CAMERA] Getting initial camera stream with reduced quality for 12+ participants');
         
+        // Set up camera constraints with reduced quality
         const constraints = {
           video: {
             ...videoConfig,
@@ -387,7 +456,19 @@ export function useServerVideoStream(roomToken: string, userId: string) {
           audio: false
         };
         
-        const stream = await navigator.mediaDevices.getUserMedia(constraints);
+        // Create a timeout promise that rejects after 10 seconds
+        const timeoutPromise = new Promise((_, reject) => {
+          const id = setTimeout(() => {
+            clearTimeout(id);
+            reject(new Error('Timeout: Camera initialization took too long'));
+          }, 10000); // 10 second timeout
+        });
+        
+        // Race between camera initialization and timeout
+        const stream = await Promise.race([
+          navigator.mediaDevices.getUserMedia(constraints),
+          timeoutPromise
+        ]) as MediaStream;
         
         // Log the actual constraints we got
         const videoTrack = stream.getVideoTracks()[0];
@@ -397,24 +478,49 @@ export function useServerVideoStream(roomToken: string, userId: string) {
         setLocalStream(stream);
         setHasVideoEnabled(true);
         
-        // Enumerate devices
-        const devices = await navigator.mediaDevices.enumerateDevices();
-        const videoInputs = devices.filter(device => device.kind === 'videoinput');
-        setVideoDevices(videoInputs);
-        
-        if (videoInputs.length > 0 && !selectedDeviceId) {
-          setSelectedDeviceId(videoInputs[0].deviceId);
+        // Enumerate devices - add a try/catch to handle potential errors
+        try {
+          const devices = await navigator.mediaDevices.enumerateDevices();
+          const videoInputs = devices.filter(device => device.kind === 'videoinput');
+          setVideoDevices(videoInputs);
+          
+          if (videoInputs.length > 0 && !selectedDeviceId) {
+            setSelectedDeviceId(videoInputs[0].deviceId);
+          }
+        } catch (enumErr) {
+          console.error('[CAMERA] Error enumerating devices:', enumErr);
         }
       } catch (err) {
         console.error('[CAMERA] Error initializing camera:', err);
+        
         // Create a placeholder stream for UI consistency
         const canvas = document.createElement('canvas');
         canvas.width = 320;
         canvas.height = 240;
-        // @ts-ignore
+        
+        // Draw a placeholder image on the canvas
+        const ctx = canvas.getContext('2d');
+        if (ctx) {
+          ctx.fillStyle = '#333';
+          ctx.fillRect(0, 0, 320, 240);
+          ctx.fillStyle = '#888';
+          ctx.font = '16px Arial';
+          ctx.fillText('Camera unavailable', 90, 120);
+        }
+        
+        // @ts-ignore - captureStream is not in TypeScript types
         const placeholderStream = canvas.captureStream(15);
         setLocalStream(placeholderStream);
         setHasVideoEnabled(false);
+        
+        // Attempt to enumerate devices even after camera error
+        try {
+          const devices = await navigator.mediaDevices.enumerateDevices();
+          const videoInputs = devices.filter(device => device.kind === 'videoinput');
+          setVideoDevices(videoInputs);
+        } catch (enumErr) {
+          console.error('[CAMERA] Error enumerating devices after camera init failure:', enumErr);
+        }
       }
     }
     
@@ -671,14 +777,25 @@ export function useServerVideoStream(roomToken: string, userId: string) {
         localStream.getTracks().forEach(track => track.stop());
       }
       
-      // Get new stream with modest quality
-      const newStream = await navigator.mediaDevices.getUserMedia({
-        video: {
-          ...videoConfig,
-          deviceId: { exact: deviceId }
-        },
-        audio: false
+      // Get new stream with modest quality and a timeout
+      const timeoutPromise = new Promise((_, reject) => {
+        const id = setTimeout(() => {
+          clearTimeout(id);
+          reject(new Error('Timeout: Camera switching took too long'));
+        }, 10000); // 10 second timeout
       });
+      
+      // Race between camera initialization and timeout
+      const newStream = await Promise.race([
+        navigator.mediaDevices.getUserMedia({
+          video: {
+            ...videoConfig,
+            deviceId: { exact: deviceId }
+          },
+          audio: false
+        }),
+        timeoutPromise
+      ]) as MediaStream;
       
       // Update state
       setSelectedDeviceId(deviceId);
