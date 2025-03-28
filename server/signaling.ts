@@ -383,16 +383,29 @@ export function registerSignalingEvents(io: SocketIOServer, socket: Socket): voi
   // Handle disconnect
   socket.on('disconnect', async () => {
     if (participantId) {
-      try {
-        await mafiaRoom.removeParticipant(participantId);
+      signalingLogger.log(`Socket ${socket.id} disconnected, participant: ${participantId}`);
+      
+      // Проверка на переподключение - даем пользователю время переподключиться
+      // перед тем как удалять его из комнаты
+      setTimeout(async () => {
+        // Проверяем, нет ли других активных соединений с тем же participantId
+        const isStillActive = Array.from(io.sockets.sockets.values())
+          .some(s => s.id !== socket.id && (s.data.participantId === participantId || s.data.userId === participantId));
         
-        // Notify all participants
-        io.to(mafiaRoom.getRoomName()).emit('participant-left', { participantId });
-        
-        signalingLogger.log(`Participant ${participantId} left the room`);
-      } catch (error) {
-        signalingLogger.error(`Error removing participant`, error);
-      }
+        if (!isStillActive) {
+          signalingLogger.log(`No active connections for ${participantId}, removing from room`);
+          await mafiaRoom.removeParticipant(participantId);
+          
+          // Notify remaining participants
+          io.to(mafiaRoom.getRoomName()).emit('participant-left', {
+            participantId
+          });
+          
+          signalingLogger.log(`Participant ${participantId} fully removed from room`);
+        } else {
+          signalingLogger.log(`Participant ${participantId} has other connections, not removing`);
+        }
+      }, 5000); // Дать 5 секунд на возможное переподключение
     }
   });
 }

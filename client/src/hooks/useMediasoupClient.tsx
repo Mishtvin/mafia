@@ -164,7 +164,19 @@ export function useMediasoupClient(): MediasoupResult {
       // Handle participant joined
       newSocket.on('participant-joined', (participant: Participant) => {
         debug('participants', `Participant joined: ${participant.id} (${participant.nickname})`, participant);
-        setParticipants(prev => [...prev, participant]);
+        
+        // Убедимся, что не добавляем дублирующих участников
+        setParticipants(prev => {
+          // Если участник уже есть в списке, обновим его данные
+          if (prev.some(p => p.id === participant.id)) {
+            return prev.map(p => p.id === participant.id ? {...p, ...participant} : p);
+          }
+          
+          // Если это новый участник, добавляем его
+          return [...prev, participant];
+        });
+        
+        debug('participants', `Updated participants list after join event`);
       });
       
       // Handle participant left

@@ -85,7 +85,12 @@ class MafiaRoom {
         roomLogger.log(`Participant reconnected: ${id}, nickname: ${nickname}`);
       }
       
-      // Close any existing transports to avoid conflicts
+      // Не закрываем транспорты при переподключении, чтобы избежать проблем с отображением
+      // Стратегия: сохраняем существующее состояние пользователя при переподключении
+      // Это предотвращает случаи, когда пользователь "исчезает" после создания транспорта
+      
+      /* 
+      // Закомментировано, чтобы сохранить существующие транспорты
       if (existingParticipant.producerTransport) {
         try {
           await existingParticipant.producerTransport.close();
@@ -104,11 +109,13 @@ class MafiaRoom {
         }
       }
       
-      // Reset video status
-      existingParticipant.hasVideo = false;
-      existingParticipant.producer = undefined;
-      existingParticipant.consumers = new Map();
+      // Сохраняем текущий статус видео вместо сброса
+      // existingParticipant.hasVideo = false;
+      // existingParticipant.producer = undefined;
+      // existingParticipant.consumers = new Map();
+      */
       
+      roomLogger.log(`Maintained existing state for participant: ${id}`);
       return existingParticipant;
     }
 
