@@ -211,6 +211,7 @@ export function VideoTile({
             playsInline
             muted
             className="w-full h-full object-cover"
+            data-user-id={participant.userId}
           />
         )}
         

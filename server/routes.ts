@@ -10,17 +10,7 @@ import {
   positionUpdateSchema
 } from "@shared/schema";
 import { VideoStreamManager } from "./videoHandler";
-
-// Интерфейс для чанков видео  
-interface VideoChunk {
-  userId: string;
-  timestamp: number;
-  data: Uint8Array;
-  frameId: number;
-}
-
-// Счетчик для отслеживания количества видеочанков от каждого пользователя
-const videoChunkCounts: Record<string, number> = {};
+import { connectionStatusSchema } from "@shared/registerEvents";
 
 // For legacy compatibility - will be less used in server streaming model
 interface WebRTCSignalingData {
@@ -118,16 +108,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
         currentRoomToken = roomToken;
         currentUserId = userId;
         
+        console.log(`User ${userId} (${nickname}) is joining room ${roomToken}`);
+        
         // Socket.IO join room
         socket.join(roomToken);
         
         // Store user and room info
         if (!rooms.has(roomToken)) {
           rooms.set(roomToken, new Map());
+          console.log(`Created new room tracking for ${roomToken}`);
         }
         
         const roomUsers = rooms.get(roomToken)!;
         roomUsers.set(userId, socket.id);
+        console.log(`Room ${roomToken} now has ${roomUsers.size} users tracked`);
         
         // Get room
         const room = await storage.getRoom(roomToken);
@@ -138,11 +132,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
         
         // Find first available position
         const participants = await storage.getParticipantsByRoom(room.id);
-        
-        console.log(`[ROOM-CRITICAL] User ${userId} (${nickname}) joining room ${roomToken}. Current participants: ${participants.length}`);
-        console.log(`[ROOM-CRITICAL] All participants in room ${roomToken}:`, participants.map(p => `${p.userId} (${p.nickname})`));
-        
-        // Find first available position
         const positions = new Set(participants.map(p => p.position));
         let position = 0;
         while (positions.has(position) && position < 12) {
@@ -154,20 +143,41 @@ export async function registerRoutes(app: Express): Promise<Server> {
           return;
         }
         
-        // Add participant to room
-        await storage.addParticipant({
-          roomId: room.id,
-          userId,
-          nickname,
-          position,
-          hasVideo: true,
-          joinedAt: Math.floor(Date.now() / 1000)
-        });
+        // Check if participant already exists (rejoining)
+        const existingParticipant = await storage.getParticipant(room.id, userId);
+        
+        if (existingParticipant) {
+          console.log(`User ${userId} is rejoining room ${roomToken}`);
+          // Update the existing participant instead of creating a new one
+          // No need to do anything as the participant is already in the DB
+        } else {
+          // Add participant to room
+          await storage.addParticipant({
+            roomId: room.id,
+            userId,
+            nickname,
+            position,
+            hasVideo: true,
+            joinedAt: Math.floor(Date.now() / 1000)
+          });
+          console.log(`Added new participant ${userId} to room ${roomToken} at position ${position}`);
+        }
         
         // Get updated participants
         const updatedParticipants = await storage.getParticipantsByRoom(room.id);
+        console.log(`Room ${roomToken} has ${updatedParticipants.length} participants`);
         
-        // Broadcast room update to all clients in the room
+        // First, send the room state to the newly joined user
+        socket.emit('roomUpdate', {
+          participants: updatedParticipants.map(p => ({
+            userId: p.userId,
+            nickname: p.nickname,
+            position: p.position,
+            hasVideo: p.hasVideo
+          }))
+        });
+        
+        // Then broadcast the update to everyone in the room (including the new user)
         io.to(roomToken).emit('roomUpdate', {
           participants: updatedParticipants.map(p => ({
             userId: p.userId,
@@ -177,9 +187,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           }))
         });
         
-        console.log(`[ROOM-CRITICAL] Room update sent to all clients in room ${roomToken} with ${updatedParticipants.length} participants`);
-        
-        console.log(`User ${userId} joined room ${roomToken}`);
+        console.log(`Room update sent for room ${roomToken} with ${updatedParticipants.length} participants`);
       } catch (error) {
         console.error('Error joining room:', error);
         socket.emit('error', { message: 'Failed to join room' });
@@ -336,49 +344,49 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
     });
     
-    // Handle video stream chunks
-    socket.on('video:chunk', (data: VideoChunk & { roomToken: string }) => {
-      const { roomToken, userId, timestamp, data: videoData, frameId } = data;
-      
-      // Get room users
-      const roomUsers = rooms.get(roomToken);
-      if (!roomUsers) {
-        console.error(`[VIDEO-ERROR] Room ${roomToken} not found when forwarding video chunk from ${userId}`);
-        return;
-      }
-      
-      // Log first chunk from each user and periodic status
-      if (!videoChunkCounts[userId]) {
-        videoChunkCounts[userId] = 0;
-        console.log(`[VIDEO-CRITICAL] First video chunk received from ${userId} for room ${roomToken}`);
-      }
-      
-      videoChunkCounts[userId]++;
-      
-      // Log status every 300 frames
-      if (videoChunkCounts[userId] % 300 === 0) {
-        console.log(`[VIDEO-CRITICAL] User ${userId} has sent ${videoChunkCounts[userId]} video chunks to room ${roomToken}`);
-      }
-      
-      // Count recipients for this chunk
-      let recipientCount = 0;
-      
-      // Forward the chunk to all other clients in the room
-      roomUsers.forEach((socketId, participantId) => {
-        if (participantId !== userId) {
-          io.to(socketId).emit('video:chunk', {
-            userId,
-            timestamp,
-            data: videoData,
-            frameId
-          });
-          recipientCount++;
+    // Handle user connection status events
+    socket.on('userConnected', (data) => {
+      try {
+        if (!connectionStatusSchema.safeParse(data).success) {
+          socket.emit('error', { message: 'Invalid connection status data' });
+          return;
         }
-      });
-      
-      // Log sending data periodically
-      if (frameId && frameId % 300 === 0) {
-        console.log(`[VIDEO-CRITICAL] Forwarded frame #${frameId} from ${userId} to ${recipientCount} recipients, data size: ${videoData?.length || 0} bytes`);
+        
+        const { userId, roomToken, connected, nickname } = data;
+        
+        console.log(`User connection event: ${userId} connected=${connected} in room ${roomToken}`);
+        
+        // Broadcast to room
+        socket.to(roomToken).emit('userConnected', data);
+      } catch (error) {
+        console.error('Error handling user connection:', error);
+      }
+    });
+    
+    // Handle user disconnection events
+    socket.on('userDisconnected', (data) => {
+      try {
+        if (!connectionStatusSchema.safeParse(data).success) {
+          socket.emit('error', { message: 'Invalid connection status data' });
+          return;
+        }
+        
+        const { userId, roomToken } = data;
+        
+        console.log(`User ${userId} manually disconnected from room ${roomToken}`);
+        
+        // Broadcast to room
+        socket.to(roomToken).emit('userDisconnected', data);
+      } catch (error) {
+        console.error('Error handling user disconnection:', error);
+      }
+    });
+    
+    // Handle heartbeat messages
+    socket.on('heartbeat', (data: { userId: string, roomToken: string, timestamp: number }) => {
+      // Just log occasionally to reduce noise
+      if (Math.random() < 0.1) {
+        console.log(`Heartbeat from ${data.userId} in room ${data.roomToken}`);
       }
     });
     

@@ -10,6 +10,8 @@ import { useServerVideoStream } from "@/hooks/useServerVideoStream";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
+// Import registration utilities
+import { registerConnectionEvents, registerHeartbeat, registerVideoEvents } from "@shared/registerEvents";
 
 export default function Room() {
   const { token } = useParams<{ token: string }>();
@@ -29,7 +31,8 @@ export default function Room() {
     isConnected,
     joinRoom,
     leaveRoom,
-    updateVideoStatus
+    updateVideoStatus,
+    socket
   } = useSocketIO(token);
 
   // Setup server-side video streaming
@@ -42,6 +45,72 @@ export default function Room() {
     getParticipantsWithStreams,
     hasVideoEnabled
   } = useServerVideoStream(token, userId);
+  
+  // Set up connection status tracking
+  useEffect(() => {
+    if (!isConnected || !socket || !nickname || !token) return;
+    
+    console.log(`[REGISTER] Setting up connection registration for ${nickname} in room ${token}`);
+    
+    // Event handler for connection status changes
+    const handleConnectionStatus = (status: any) => {
+      console.log(`[REGISTER] User connection update:`, status);
+      
+      // If a user connects/disconnects, force room update
+      const { userId: connectionUserId, connected } = status;
+      
+      // Don't update for our own events
+      if (connectionUserId === userId) return;
+      
+      // Request room state update to make sure we have latest data
+      fetch(`/api/rooms/${token}`)
+        .then(res => res.json())
+        .then(roomData => {
+          console.log(`[REGISTER] Received updated room state after connection event:`, 
+            roomData.participants.map((p: any) => p.nickname));
+          
+          setRoomState({
+            token,
+            participants: roomData.participants
+          });
+        })
+        .catch(err => console.error('[REGISTER] Error fetching room update:', err));
+    };
+    
+    // Register connection event handlers
+    const cleanupConnectionEvents = registerConnectionEvents(
+      socket, 
+      userId, 
+      token,
+      handleConnectionStatus
+    );
+    
+    // Register video events
+    const cleanupVideoEvents = registerVideoEvents(
+      socket,
+      (videoUserId) => console.log(`[REGISTER] User ${videoUserId} started streaming`),
+      (videoUserId) => console.log(`[REGISTER] User ${videoUserId} stopped streaming`)
+    );
+    
+    // Register heartbeat
+    const cleanupHeartbeat = registerHeartbeat(socket, userId, token);
+    
+    // Send initial connection status
+    socket.emit('userConnected', {
+      userId,
+      roomToken: token,
+      connected: true,
+      nickname,
+      timestamp: Date.now()
+    });
+    
+    // Cleanup when unmounting
+    return () => {
+      cleanupConnectionEvents();
+      cleanupVideoEvents();
+      cleanupHeartbeat();
+    };
+  }, [isConnected, socket, userId, token, nickname, setRoomState]);
   
   // Get participants with streams 
   const participantsWithStreams = roomState?.participants 
