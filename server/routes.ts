@@ -118,6 +118,45 @@ export async function registerRoutes(app: Express): Promise<Server> {
     // Register mediasoup signaling events
     registerSignalingEvents(io, socket);
     
+    // Test handlers for debugging purposes
+    socket.on('active-handlers', (callback) => {
+      if (typeof callback === 'function') {
+        const handlers = Array.from(socket.eventNames());
+        socketLogger.log('Received active-handlers request', { 
+          socketId: socket.id, 
+          handlers 
+        });
+        callback({ 
+          socketId: socket.id,
+          handlers: handlers,
+          serverTime: new Date().toISOString()
+        });
+      }
+    });
+    
+    // Test specific handlers
+    socket.on('test-handlers', (data, callback) => {
+      if (typeof callback === 'function') {
+        const result: Record<string, boolean> = {};
+        const events = data?.events || [];
+        
+        socketLogger.log('Testing handlers availability', { 
+          socketId: socket.id, 
+          events 
+        });
+        
+        for (const event of events) {
+          const hasHandler = socket.eventNames().includes(event);
+          result[event] = hasHandler;
+        }
+        
+        callback({
+          result,
+          all: Array.from(socket.eventNames())
+        });
+      }
+    });
+    
     // Register video stream handlers (legacy)
     videoManager.registerHandlers(socket);
     

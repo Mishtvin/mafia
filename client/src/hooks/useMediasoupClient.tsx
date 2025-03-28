@@ -109,12 +109,23 @@ export function useMediasoupClient(): MediasoupResult {
       newSocket.on('connect', () => {
         debug('socket', `Socket connected with ID: ${newSocket.id}`);
         
+        // Добавляем проверку наличия текущих обработчиков на сервере
+        newSocket.emit('active-handlers', (response: any) => {
+          debug('socket', 'Active handlers on server:', response || 'No response from server (active-handlers event not registered)');
+        });
+        
         // Join the room
         setTimeout(() => {
           debug('socket', `Joining room with userId: ${userId}, nickname: ${nickname}`);
           
           // First join room via socket.io, с обработкой ошибок и фолбеком на событие
           const joinRoomRequest = { roomToken, userId, nickname };
+          
+          // Отладочная проверка событий на которые подписан сервер
+          debug('handlers', `Testing server event handlers registration...`);
+          newSocket.emit('test-handlers', { events: ['joinRoom', 'join-room', 'get-rtp-capabilities'] }, (response: any) => {
+            debug('handlers', `Server handlers test response:`, response || 'No response (event not registered)');
+          });
           
           // Подписываемся на ответное событие для случая, если колбэк не сработает
           newSocket.once('joinRoomResponse', (response: any) => {
@@ -145,7 +156,37 @@ export function useMediasoupClient(): MediasoupResult {
                 'get-rtp-capabilities': newSocket.listeners('get-rtp-capabilities').length
               });
               
+              // Напрямую проверяем, есть ли обработчик для join-room на сервере
+              debug('socket', 'Testing join-room handler on server...');
+              const testTimeout = setTimeout(() => {
+                debug('socket', 'WARNING: No response to join-room test after 1 second!');
+                // Попробуем отправить без ожидания ответа
+                debug('socket', 'Trying to send join-room without waiting for callback...');
+                newSocket.emit('join-room', { userId, nickname });
+                
+                // Принудительно пробуем следующий шаг через 500ms
+                setTimeout(() => {
+                  debug('socket', 'Forcing next step: requesting RTP capabilities directly');
+                  newSocket.emit('get-rtp-capabilities', { userId }, async (rtpResponse: any) => {
+                    debug('socket', 'Manual RTP capabilities response:', rtpResponse);
+                    
+                    if (rtpResponse && rtpResponse.success) {
+                      try {
+                        debug('device', 'Manually loading device with RTP capabilities', rtpResponse.rtpCapabilities);
+                        await state.device?.load({ routerRtpCapabilities: rtpResponse.rtpCapabilities });
+                        setState(prev => ({ ...prev, connected: true }));
+                        debug('device', 'MediaSoup device loaded successfully (manual)');
+                      } catch (error) {
+                        debug('device', 'Manual device loading failed', error);
+                      }
+                    }
+                  });
+                }, 500);
+              }, 1000);
+              
+              // Теперь отправляем событие join-room
               newSocket.emit('join-room', { userId, nickname }, async (response: any) => {
+                clearTimeout(testTimeout); // Очищаем таймаут, так как получили ответ
                 debug('socket', 'Received join-room response', response);
                 
                 // Проверка является ли ответ undefined (отсутствие колбэка)
