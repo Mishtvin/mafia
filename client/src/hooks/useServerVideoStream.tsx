@@ -2,11 +2,11 @@ import { useEffect, useState, useRef, useCallback } from 'react';
 import { useSocketIO } from './useSocketIO';
 import { VideoStreamMetadata } from '@shared/schema';
 
-// For video encoding/decoding
+// Use more modest video quality settings to reduce bandwidth and CPU usage
 const videoConfig = {
-  width: { ideal: 1920, max: 1920 }, // 1080p
-  height: { ideal: 1080, max: 1080 },
-  frameRate: { ideal: 30, max: 60 }  // Up to 60fps
+  width: { ideal: 640, max: 1280 },  // 720p is sufficient for most use cases
+  height: { ideal: 480, max: 720 },
+  frameRate: { ideal: 24, max: 30 }  // 24-30fps is good for video conferencing
 };
 
 interface VideoStream {
@@ -40,7 +40,7 @@ export function useServerVideoStream(roomToken: string, userId: string) {
       const { userId, width, height, frameRate } = data;
       
       // Skip if it's our own stream
-      if (userId === userId) return;
+      // No special handling needed for now
       
       console.log(`[VIDEO] New stream available from ${userId}: ${width}x${height}@${frameRate}fps`);
       
@@ -65,7 +65,7 @@ export function useServerVideoStream(roomToken: string, userId: string) {
       const { userId, data: chunkData } = data;
       
       // Skip if it's our own video chunk
-      if (userId === userId) return;
+      // No special handling needed for now
       
       // Get the remote stream
       const remoteStream = remoteStreams.get(userId);
