@@ -125,9 +125,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
     let currentUserId: string | null = null;
     
     // Handle join room event
-    socket.on('joinRoom', async (data) => {
+    socket.on('joinRoom', async (data, callback) => {
       try {
         if (!joinRoomMessageSchema.safeParse(data).success) {
+          roomLogger.log(`Invalid join room data`, { data });
           socket.emit('error', { message: 'Invalid join room data' });
           return;
         }
@@ -136,10 +137,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
         currentRoomToken = roomToken;
         currentUserId = userId;
         
-        roomLogger.log(`User joining room`, { 
+        roomLogger.log(`User joining room via joinRoom`, { 
           userId, 
           nickname, 
-          roomToken 
+          roomToken,
+          socketId: socket.id
         });
         
         // Socket.IO join room
@@ -233,6 +235,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
           roomToken, 
           participantCount: updatedParticipants.length 
         });
+        
+        // Call the callback if provided to acknowledge success
+        if (typeof callback === 'function') {
+          roomLogger.log('Sending joinRoom callback confirmation');
+          callback({ success: true });
+        }
       } catch (error) {
         logError('Error joining room', error);
         socket.emit('error', { message: 'Failed to join room' });
