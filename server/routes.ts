@@ -11,6 +11,12 @@ import {
 } from "@shared/schema";
 import { VideoStreamManager } from "./videoHandler";
 import { connectionStatusSchema } from "@shared/registerEvents";
+import { 
+  socketLogger, 
+  roomLogger, 
+  connectionLogger,
+  logError 
+} from "./logger";
 
 // For legacy compatibility - will be less used in server streaming model
 interface WebRTCSignalingData {
@@ -46,12 +52,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.post('/api/rooms', async (req, res) => {
     try {
       const room = await storage.createRoom();
+      roomLogger.log('Room created', { token: room.token });
       res.status(201).json({ 
         token: room.token,
         createdAt: room.createdAt
       });
     } catch (error) {
-      console.error('Error creating room:', error);
+      logError('Error creating room', error);
       res.status(500).json({ message: 'Error creating room' });
     }
   });
@@ -63,10 +70,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const room = await storage.getRoom(token);
       
       if (!room) {
+        roomLogger.log('Room not found', { token });
         return res.status(404).json({ message: 'Room not found' });
       }
       
       const participants = await storage.getParticipantsByRoom(room.id);
+      
+      roomLogger.log('Room info requested', { 
+        token: room.token, 
+        participantCount: participants.length 
+      });
       
       res.status(200).json({
         token: room.token,
@@ -78,14 +91,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }))
       });
     } catch (error) {
-      console.error('Error getting room:', error);
+      logError('Error getting room', error);
       res.status(500).json({ message: 'Error getting room' });
     }
   });
   
   // Socket.IO connection handler
   io.on('connection', (socket: Socket) => {
-    console.log('Socket.IO client connected:', socket.id);
+    socketLogger.log('Client connected', { socketId: socket.id });
     
     // Send immediate welcome message to establish connection as stable
     socket.emit('welcome', { message: 'Connected to Socket.IO server' });
@@ -108,7 +121,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
         currentRoomToken = roomToken;
         currentUserId = userId;
         
-        console.log(`User ${userId} (${nickname}) is joining room ${roomToken}`);
+        roomLogger.log(`User joining room`, { 
+          userId, 
+          nickname, 
+          roomToken 
+        });
         
         // Socket.IO join room
         socket.join(roomToken);
@@ -116,12 +133,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
         // Store user and room info
         if (!rooms.has(roomToken)) {
           rooms.set(roomToken, new Map());
-          console.log(`Created new room tracking for ${roomToken}`);
+          roomLogger.log(`Created new room tracking`, { roomToken });
         }
         
         const roomUsers = rooms.get(roomToken)!;
         roomUsers.set(userId, socket.id);
-        console.log(`Room ${roomToken} now has ${roomUsers.size} users tracked`);
+        roomLogger.log(`Room user count updated`, { 
+          roomToken, 
+          userCount: roomUsers.size 
+        });
         
         // Get room
         const room = await storage.getRoom(roomToken);
@@ -147,7 +167,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const existingParticipant = await storage.getParticipant(room.id, userId);
         
         if (existingParticipant) {
-          console.log(`User ${userId} is rejoining room ${roomToken}`);
+          roomLogger.log(`User rejoining room`, { userId, roomToken });
           // Update the existing participant instead of creating a new one
           // No need to do anything as the participant is already in the DB
         } else {
@@ -160,12 +180,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
             hasVideo: true,
             joinedAt: Math.floor(Date.now() / 1000)
           });
-          console.log(`Added new participant ${userId} to room ${roomToken} at position ${position}`);
+          roomLogger.log(`Added new participant`, { 
+            userId, 
+            roomToken, 
+            position 
+          });
         }
         
         // Get updated participants
         const updatedParticipants = await storage.getParticipantsByRoom(room.id);
-        console.log(`Room ${roomToken} has ${updatedParticipants.length} participants`);
+        roomLogger.log(`Room participants`, { 
+          roomToken, 
+          count: updatedParticipants.length 
+        });
         
         // First, send the room state to the newly joined user
         socket.emit('roomUpdate', {
@@ -187,9 +214,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
           }))
         });
         
-        console.log(`Room update sent for room ${roomToken} with ${updatedParticipants.length} participants`);
+        roomLogger.log(`Room update broadcast complete`, { 
+          roomToken, 
+          participantCount: updatedParticipants.length 
+        });
       } catch (error) {
-        console.error('Error joining room:', error);
+        logError('Error joining room', error);
         socket.emit('error', { message: 'Failed to join room' });
       }
     });
@@ -238,9 +268,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
           }))
         });
         
-        console.log(`User ${userId} left room ${roomToken}`);
+        roomLogger.log(`User left room`, { userId, roomToken });
       } catch (error) {
-        console.error('Error leaving room:', error);
+        logError('Error leaving room', error);
         socket.emit('error', { message: 'Failed to leave room' });
       }
     });
@@ -279,9 +309,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
           }))
         });
         
-        console.log(`User ${userId} updated video status to ${hasVideo}`);
+        roomLogger.log(`Video status updated`, { userId, roomToken, hasVideo });
       } catch (error) {
-        console.error('Error updating video status:', error);
+        logError('Error updating video status', error);
         socket.emit('error', { message: 'Failed to update video status' });
       }
     });
@@ -316,9 +346,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
           }))
         });
         
-        console.log(`Position update in room ${roomToken}`);
+        roomLogger.log(`Positions updated`, { 
+          roomToken, 
+          updatedCount: positions.length 
+        });
       } catch (error) {
-        console.error('Error updating positions:', error);
+        logError('Error updating positions', error);
         socket.emit('error', { message: 'Failed to update positions' });
       }
     });
@@ -338,9 +371,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
         // Forward the signaling data to the receiver
         io.to(receiverSocketId).emit('webrtc', data);
         
-        console.log(`WebRTC signaling: ${sender} -> ${receiver}, action: ${data.action}`);
+        // Only log occasionally to reduce noise
+        if (Math.random() < 0.1) { // 10% chance to log
+          socketLogger.log(`WebRTC signaling`, { 
+            sender, 
+            receiver, 
+            action: data.action 
+          });
+        }
       } catch (error) {
-        console.error('Error processing WebRTC signaling:', error);
+        logError('Error processing WebRTC signaling', error);
       }
     });
     
@@ -354,12 +394,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
         
         const { userId, roomToken, connected, nickname } = data;
         
-        console.log(`User connection event: ${userId} connected=${connected} in room ${roomToken}`);
+        connectionLogger.log(`User connection status changed`, { 
+          userId, 
+          roomToken, 
+          connected, 
+          nickname 
+        });
         
         // Broadcast to room
         socket.to(roomToken).emit('userConnected', data);
       } catch (error) {
-        console.error('Error handling user connection:', error);
+        logError('Error handling user connection status', error);
+        socket.emit('error', { message: 'Failed to process connection status' });
       }
     });
     
@@ -373,20 +419,25 @@ export async function registerRoutes(app: Express): Promise<Server> {
         
         const { userId, roomToken } = data;
         
-        console.log(`User ${userId} manually disconnected from room ${roomToken}`);
+        connectionLogger.log(`User manually disconnected`, { userId, roomToken });
         
         // Broadcast to room
         socket.to(roomToken).emit('userDisconnected', data);
       } catch (error) {
-        console.error('Error handling user disconnection:', error);
+        logError('Error handling user disconnection', error);
+        socket.emit('error', { message: 'Failed to process disconnection' });
       }
     });
     
     // Handle heartbeat messages
     socket.on('heartbeat', (data: { userId: string, roomToken: string, timestamp: number }) => {
       // Just log occasionally to reduce noise
-      if (Math.random() < 0.1) {
-        console.log(`Heartbeat from ${data.userId} in room ${data.roomToken}`);
+      if (Math.random() < 0.01) { // Reduced to 1% probability (was 10%)
+        connectionLogger.log(`Heartbeat received`, { 
+          userId: data.userId, 
+          roomToken: data.roomToken,
+          timeGap: Date.now() - data.timestamp
+        }, true);
       }
     });
     
@@ -394,6 +445,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
     socket.on('disconnect', async () => {
       try {
         if (currentRoomToken && currentUserId) {
+          // Log the disconnect
+          connectionLogger.log(`User socket disconnected`, { 
+            userId: currentUserId, 
+            roomToken: currentRoomToken,
+            socketId: socket.id
+          });
+          
           // Clean up video streams
           videoManager.handleDisconnect(socket, currentRoomToken, currentUserId);
           
@@ -411,6 +469,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             
             // If room is empty, remove room
             if (roomUsers.size === 0) {
+              roomLogger.log(`Room is now empty, removing tracking`, { roomToken: currentRoomToken });
               rooms.delete(currentRoomToken);
             } else {
               // Get updated participants
@@ -425,13 +484,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
                   hasVideo: p.hasVideo
                 }))
               });
+              
+              roomLogger.log(`Broadcast room update after disconnect`, { 
+                roomToken: currentRoomToken, 
+                remainingParticipants: updatedParticipants.length 
+              });
             }
           }
-          
-          console.log(`User ${currentUserId} disconnected from room ${currentRoomToken}`);
+        } else {
+          // Just a connection that never joined a room
+          socketLogger.log(`Disconnected socket that wasn't in a room`, { socketId: socket.id });
         }
       } catch (error) {
-        console.error('Error handling disconnect:', error);
+        logError('Error handling socket disconnect', error);
       }
     });
   });

@@ -1,5 +1,6 @@
 import { Socket, Server as SocketIOServer } from "socket.io";
 import { storage } from "./storage";
+import { videoLogger } from "./logger";
 
 // Types for video stream management
 export interface VideoChunk {
@@ -45,7 +46,12 @@ export class VideoStreamManager {
     socket.on('video:start', async (data: StreamMetadata & { roomToken: string }) => {
       const { roomToken, userId, width, height, frameRate, codecParams } = data;
       
-      console.log(`[VIDEO] User ${userId} starting stream in room ${roomToken} (${width}x${height}@${frameRate}fps)`);
+      videoLogger.log(`User starting stream`, { 
+        userId, 
+        roomToken, 
+        resolution: `${width}x${height}`, 
+        frameRate 
+      });
       
       // Store metadata for the stream
       if (!this.activeStreams.has(roomToken)) {
@@ -83,7 +89,7 @@ export class VideoStreamManager {
         codecParams
       });
       
-      console.log(`User ${userId} started streaming video in room ${roomToken}`);
+      videoLogger.log(`Stream started and registered`, { userId, roomToken });
       
       // Update participant video status in storage
       try {
@@ -95,7 +101,11 @@ export class VideoStreamManager {
         
         await storage.updateParticipantVideo(participant.id, true);
       } catch (error) {
-        console.error('Error updating participant video status:', error);
+        videoLogger.log('Error updating participant video status', { 
+          userId, 
+          roomToken, 
+          error: error instanceof Error ? error.message : String(error) 
+        });
       }
     });
     
@@ -183,7 +193,7 @@ export class VideoStreamManager {
       // Notify all clients that the stream has stopped
       socket.to(roomToken).emit('video:streamEnded', { userId });
       
-      console.log(`User ${userId} stopped streaming video in room ${roomToken}`);
+      videoLogger.log(`Stream stopped`, { userId, roomToken });
       
       // Update participant video status in storage
       try {
@@ -195,7 +205,11 @@ export class VideoStreamManager {
         
         await storage.updateParticipantVideo(participant.id, false);
       } catch (error) {
-        console.error('Error updating participant video status:', error);
+        videoLogger.log('Error updating participant video status', { 
+          userId, 
+          roomToken, 
+          error: error instanceof Error ? error.message : String(error) 
+        });
       }
     });
   }
@@ -240,7 +254,11 @@ export class VideoStreamManager {
       
       roomStreams.forEach((streamInfo, userId) => {
         if (streamInfo.lastActive && now - streamInfo.lastActive > this.STREAM_TIMEOUT) {
-          console.log(`Stream for user ${userId} in room ${roomToken} timed out due to inactivity`);
+          videoLogger.log(`Stream timed out due to inactivity`, { 
+            userId, 
+            roomToken, 
+            inactiveTime: now - streamInfo.lastActive 
+          });
           streamInfo.active = false;
           roomStreams.set(userId, streamInfo);
           hasInactive = true;
@@ -281,7 +299,7 @@ export class VideoStreamManager {
         // Notify all clients that the stream has stopped
         socket.to(roomToken).emit('video:streamEnded', { userId });
         
-        console.log(`User ${userId} stream ended due to disconnect from room ${roomToken}`);
+        videoLogger.log(`Stream ended due to disconnect`, { userId, roomToken });
       }
       
       // If no more streams in the room, clean up
