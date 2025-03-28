@@ -91,7 +91,7 @@ export function registerSignalingEvents(io: SocketIOServer, socket: Socket): voi
           id: s.id, 
           participantId: s.data.participantId,
           connected: s.connected
-        }))
+        })), true
       );
       
       // Получаем имя комнаты до добавления участника
@@ -103,8 +103,20 @@ export function registerSignalingEvents(io: SocketIOServer, socket: Socket): voi
         signalingLogger.log(`Socket ${socket.id} already in room ${roomName}`, null, true);
       }
       
-      const participant = await mafiaRoom.addParticipant(request.userId, request.nickname);
-      signalingLogger.log(`Added participant: ${JSON.stringify(participant)}`);
+      // Проверяем, существует ли уже этот участник в комнате
+      // Это важно, так как joinRoom в routes.ts уже мог добавить участника
+      const existingParticipant = mafiaRoom.getParticipants().get(request.userId);
+      
+      let participant;
+      if (existingParticipant) {
+        signalingLogger.log(`Participant ${request.userId} already exists in mafiaRoom, using existing`, existingParticipant, true);
+        participant = existingParticipant;
+      } else {
+        // Добавляем участника только если его ещё нет
+        signalingLogger.log(`Adding new participant ${request.userId} to mafiaRoom`, null, true);
+        participant = await mafiaRoom.addParticipant(request.userId, request.nickname);
+        signalingLogger.log(`Added participant: ${JSON.stringify(participant)}`, null, true);
+      }
       
       // Join the socket to the room - обеспечиваем присоединение к комнате Socket.IO
       if (!isInRoom) {
@@ -115,6 +127,15 @@ export function registerSignalingEvents(io: SocketIOServer, socket: Socket): voi
       // Send the current participants to the new participant
       const participants = mafiaRoom.getParticipantsInfo();
       signalingLogger.log(`Current participants: ${JSON.stringify(participants)}`, null, true);
+      
+      // Проверяем, есть ли функция обратного вызова
+      if (typeof callback !== 'function') {
+        signalingLogger.error(`No callback function provided for join-room! This is critical for MediaSoup flow!`, {
+          socketId: socket.id,
+          userId: request.userId
+        });
+        return;
+      }
       
       callback({
         success: true,
@@ -129,7 +150,7 @@ export function registerSignalingEvents(io: SocketIOServer, socket: Socket): voi
         hasVideo: participant.hasVideo
       });
 
-      signalingLogger.log(`Participant ${request.userId} joined the room successfully and others were notified`);
+      signalingLogger.log(`Participant ${request.userId} joined the room successfully and others were notified`, null, true);
       
       // Проверяем, доставлено ли уведомление другим клиентам
       setTimeout(() => {
@@ -138,10 +159,19 @@ export function registerSignalingEvents(io: SocketIOServer, socket: Socket): voi
           roomName: roomName,
           socketCount: roomMembers?.size || 0,
           socketIds: Array.from(roomMembers || new Set())
-        }, true);
+        });
       }, 500);
     } catch (error) {
-      callback(handleError('Error joining room', error));
+      signalingLogger.error(`Error in join-room handler:`, error);
+      // Проверяем, есть ли функция обратного вызова
+      if (typeof callback === 'function') {
+        callback(handleError('Error joining room', error));
+      } else {
+        signalingLogger.error(`Cannot send error to client - no callback function!`, {
+          socketId: socket.id,
+          error: error instanceof Error ? error.message : String(error)
+        });
+      }
     }
   });
 
@@ -150,6 +180,15 @@ export function registerSignalingEvents(io: SocketIOServer, socket: Socket): voi
     try {
       // Log details for debugging
       signalingLogger.log(`Received RTP capabilities request for user ${request.userId}`, request, true);
+      
+      // Проверяем, есть ли функция обратного вызова
+      if (typeof callback !== 'function') {
+        signalingLogger.error(`No callback function provided for get-rtp-capabilities! This is critical for MediaSoup flow!`, {
+          socketId: socket.id,
+          userId: request.userId
+        });
+        return;
+      }
       
       // Get router capabilities
       const rtpCapabilities = getRouterRtpCapabilities();
@@ -161,7 +200,16 @@ export function registerSignalingEvents(io: SocketIOServer, socket: Socket): voi
         rtpCapabilities
       });
     } catch (error) {
-      callback(handleError('Error getting RTP capabilities', error));
+      signalingLogger.error(`Error in get-rtp-capabilities handler:`, error);
+      // Проверяем, есть ли функция обратного вызова
+      if (typeof callback === 'function') {
+        callback(handleError('Error getting RTP capabilities', error));
+      } else {
+        signalingLogger.error(`Cannot send error to client - no callback function!`, {
+          socketId: socket.id,
+          error: error instanceof Error ? error.message : String(error)
+        });
+      }
     }
   });
 
@@ -169,8 +217,8 @@ export function registerSignalingEvents(io: SocketIOServer, socket: Socket): voi
   socket.on('create-transport', async (request: CreateTransportRequest, callback) => {
     try {
       // Log the request for debugging
-      signalingLogger.log(`Create transport request: ${JSON.stringify(request)}`);
-      signalingLogger.log(`Current participantId: ${participantId}`);
+      signalingLogger.log(`Create transport request: ${JSON.stringify(request)}`, null, true);
+      signalingLogger.log(`Current participantId: ${participantId}`, null, true);
       
       // Temporarily disable ID check for debugging
       // if (request.userId !== participantId) {
@@ -180,16 +228,16 @@ export function registerSignalingEvents(io: SocketIOServer, socket: Socket): voi
       // Set participantId if not already set (for robustness)
       if (!participantId) {
         participantId = request.userId;
-        signalingLogger.log(`Setting participantId to ${participantId} from transport request`);
+        signalingLogger.log(`Setting participantId to ${participantId} from transport request`, null, true);
       }
 
       let transportData;
       if (request.direction === 'send') {
         transportData = await mafiaRoom.createProducerTransport(request.userId);
-        signalingLogger.log(`Created producer transport for ${request.userId}`);
+        signalingLogger.log(`Created producer transport for ${request.userId}`, null, true);
       } else {
         transportData = await mafiaRoom.createConsumerTransport(request.userId);
-        signalingLogger.log(`Created consumer transport for ${request.userId}`);
+        signalingLogger.log(`Created consumer transport for ${request.userId}`, null, true);
       }
 
       callback({
@@ -205,8 +253,8 @@ export function registerSignalingEvents(io: SocketIOServer, socket: Socket): voi
   socket.on('connect-transport', async (request: ConnectTransportRequest, callback) => {
     try {
       // Log for debugging
-      signalingLogger.log(`Connect transport request: ${JSON.stringify(request)}`);
-      signalingLogger.log(`Current participantId: ${participantId}`);
+      signalingLogger.log(`Connect transport request: ${JSON.stringify(request)}`, null, true);
+      signalingLogger.log(`Current participantId: ${participantId}`, null, true);
       
       // Temporarily disable ID check for debugging
       // if (request.userId !== participantId) {
@@ -216,15 +264,15 @@ export function registerSignalingEvents(io: SocketIOServer, socket: Socket): voi
       // Set participantId if not already set (for robustness)
       if (!participantId) {
         participantId = request.userId;
-        signalingLogger.log(`Setting participantId to ${participantId} from connect-transport request`);
+        signalingLogger.log(`Setting participantId to ${participantId} from connect-transport request`, null, true);
       }
 
       if (request.direction === 'send') {
         await mafiaRoom.connectProducerTransport(request.userId, request.dtlsParameters);
-        signalingLogger.log(`Connected producer transport for ${request.userId}`);
+        signalingLogger.log(`Connected producer transport for ${request.userId}`, null, true);
       } else {
         await mafiaRoom.connectConsumerTransport(request.userId, request.dtlsParameters);
-        signalingLogger.log(`Connected consumer transport for ${request.userId}`);
+        signalingLogger.log(`Connected consumer transport for ${request.userId}`, null, true);
       }
 
       callback({ success: true });
@@ -237,8 +285,8 @@ export function registerSignalingEvents(io: SocketIOServer, socket: Socket): voi
   socket.on('produce', async (request: ProduceRequest, callback) => {
     try {
       // Log for debugging
-      signalingLogger.log(`Produce request: ${JSON.stringify(request)}`);
-      signalingLogger.log(`Current participantId: ${participantId}`);
+      signalingLogger.log(`Produce request: ${JSON.stringify(request)}`, null, true);
+      signalingLogger.log(`Current participantId: ${participantId}`, null, true);
       
       // Temporarily disable ID check for debugging
       // if (request.userId !== participantId) {
@@ -248,7 +296,7 @@ export function registerSignalingEvents(io: SocketIOServer, socket: Socket): voi
       // Set participantId if not already set (for robustness)
       if (!participantId) {
         participantId = request.userId;
-        signalingLogger.log(`Setting participantId to ${participantId} from produce request`);
+        signalingLogger.log(`Setting participantId to ${participantId} from produce request`, null, true);
       }
 
       const producerId = await mafiaRoom.createProducer(
@@ -256,18 +304,18 @@ export function registerSignalingEvents(io: SocketIOServer, socket: Socket): voi
         request.kind,
         request.rtpParameters
       );
-      signalingLogger.log(`Created producer for ${request.userId}: ${producerId}`);
+      signalingLogger.log(`Created producer for ${request.userId}: ${producerId}`, null, true);
 
       // Update video status
       mafiaRoom.updateParticipantVideo(request.userId, true);
-      signalingLogger.log(`Updated video status for ${request.userId} to true`);
+      signalingLogger.log(`Updated video status for ${request.userId} to true`, null, true);
 
       // Notify all participants about the video status change
       io.to(mafiaRoom.getRoomName()).emit('video-status-changed', {
         participantId: request.userId,
         hasVideo: true
       });
-      signalingLogger.log(`Notified room about video status change for ${request.userId}`);
+      signalingLogger.log(`Notified room about video status change for ${request.userId}`, null, true);
 
       callback({
         success: true,
@@ -282,8 +330,8 @@ export function registerSignalingEvents(io: SocketIOServer, socket: Socket): voi
   socket.on('consume', async (request: ConsumeRequest, callback) => {
     try {
       // Log for debugging
-      signalingLogger.log(`Consume request: ${JSON.stringify(request)}`);
-      signalingLogger.log(`Current participantId: ${participantId}`);
+      signalingLogger.log(`Consume request: ${JSON.stringify(request)}`, null, true);
+      signalingLogger.log(`Current participantId: ${participantId}`, null, true);
       
       // Temporarily disable ID check for debugging
       // if (request.userId !== participantId) {
@@ -293,14 +341,14 @@ export function registerSignalingEvents(io: SocketIOServer, socket: Socket): voi
       // Set participantId if not already set (for robustness)
       if (!participantId) {
         participantId = request.userId;
-        signalingLogger.log(`Setting participantId to ${participantId} from consume request`);
+        signalingLogger.log(`Setting participantId to ${participantId} from consume request`, null, true);
       }
 
       const consumer = await mafiaRoom.createConsumer(
         request.userId,
         request.producerParticipantId
       );
-      signalingLogger.log(`Created consumer for ${request.userId} to consume ${request.producerParticipantId}`);
+      signalingLogger.log(`Created consumer for ${request.userId} to consume ${request.producerParticipantId}`, null, true);
 
       if (!consumer) {
         throw new Error('Could not create consumer');
@@ -319,8 +367,8 @@ export function registerSignalingEvents(io: SocketIOServer, socket: Socket): voi
   socket.on('consume-all', async (request: { userId: string, rtpCapabilities: types.RtpCapabilities }, callback) => {
     try {
       // Log for debugging
-      signalingLogger.log(`Consume-all request: ${JSON.stringify(request)}`);
-      signalingLogger.log(`Current participantId: ${participantId}`);
+      signalingLogger.log(`Consume-all request: ${JSON.stringify(request)}`, null, true);
+      signalingLogger.log(`Current participantId: ${participantId}`, null, true);
       
       // Temporarily disable ID check for debugging
       // if (request.userId !== participantId) {
@@ -330,14 +378,14 @@ export function registerSignalingEvents(io: SocketIOServer, socket: Socket): voi
       // Set participantId if not already set (for robustness)
       if (!participantId) {
         participantId = request.userId;
-        signalingLogger.log(`Setting participantId to ${participantId} from consume-all request`);
+        signalingLogger.log(`Setting participantId to ${participantId} from consume-all request`, null, true);
       }
 
       const consumers = await mafiaRoom.createConsumersForNewParticipant(
         request.userId,
         request.rtpCapabilities
       );
-      signalingLogger.log(`Created ${consumers.length} consumers for ${request.userId}`);
+      signalingLogger.log(`Created ${consumers.length} consumers for ${request.userId}`, null, true);
 
       callback({
         success: true,
@@ -352,8 +400,8 @@ export function registerSignalingEvents(io: SocketIOServer, socket: Socket): voi
   socket.on('update-position', (request: UpdatePositionRequest, callback) => {
     try {
       // Log for debugging
-      signalingLogger.log(`Update position request: ${JSON.stringify(request)}`);
-      signalingLogger.log(`Current participantId: ${participantId}`);
+      signalingLogger.log(`Update position request: ${JSON.stringify(request)}`, null, true);
+      signalingLogger.log(`Current participantId: ${participantId}`, null, true);
       
       // Temporarily disable ID check for debugging
       // if (request.userId !== participantId) {
@@ -363,20 +411,20 @@ export function registerSignalingEvents(io: SocketIOServer, socket: Socket): voi
       // Set participantId if not already set (for robustness)
       if (!participantId) {
         participantId = request.userId;
-        signalingLogger.log(`Setting participantId to ${participantId} from update-position request`);
+        signalingLogger.log(`Setting participantId to ${participantId} from update-position request`, null, true);
       }
 
       const success = mafiaRoom.updateParticipantPosition(
         request.userId,
         request.position
       );
-      signalingLogger.log(`Updated position for ${request.userId} to ${request.position}: ${success}`);
+      signalingLogger.log(`Updated position for ${request.userId} to ${request.position}: ${success}`, null, true);
 
       if (success) {
         // Notify all participants about the position change
         const participants = mafiaRoom.getParticipantsInfo();
         io.to(mafiaRoom.getRoomName()).emit('positions-updated', participants);
-        signalingLogger.log(`Notified room of position updates: ${JSON.stringify(participants)}`);
+        signalingLogger.log(`Notified room of position updates: ${JSON.stringify(participants)}`, null, true);
       }
 
       callback({ success });
@@ -389,16 +437,16 @@ export function registerSignalingEvents(io: SocketIOServer, socket: Socket): voi
   socket.on('update-positions', (request: UpdatePositionsRequest, callback) => {
     try {
       // Log for debugging
-      signalingLogger.log(`Update positions request: ${JSON.stringify(request)}`);
+      signalingLogger.log(`Update positions request: ${JSON.stringify(request)}`, null, true);
 
       const success = mafiaRoom.updatePositions(request.positionUpdates);
-      signalingLogger.log(`Updated multiple positions: ${success}`);
+      signalingLogger.log(`Updated multiple positions: ${success}`, null, true);
 
       if (success) {
         // Notify all participants about the position changes
         const participants = mafiaRoom.getParticipantsInfo();
         io.to(mafiaRoom.getRoomName()).emit('positions-updated', participants);
-        signalingLogger.log(`Notified room of position updates: ${JSON.stringify(participants)}`);
+        signalingLogger.log(`Notified room of position updates: ${JSON.stringify(participants)}`, null, true);
       }
 
       callback({ success });
@@ -410,7 +458,7 @@ export function registerSignalingEvents(io: SocketIOServer, socket: Socket): voi
   // Handle disconnect
   socket.on('disconnect', async () => {
     if (participantId) {
-      signalingLogger.log(`Socket ${socket.id} disconnected, participant: ${participantId}`);
+      signalingLogger.log(`Socket ${socket.id} disconnected, participant: ${participantId}`, null, true);
       
       // Проверка на переподключение - даем пользователю время переподключиться
       // перед тем как удалять его из комнаты
@@ -420,7 +468,7 @@ export function registerSignalingEvents(io: SocketIOServer, socket: Socket): voi
           .some(s => s.id !== socket.id && (s.data.participantId === participantId || s.data.userId === participantId));
         
         if (!isStillActive) {
-          signalingLogger.log(`No active connections for ${participantId}, removing from room`);
+          signalingLogger.log(`No active connections for ${participantId}, removing from room`, null, true);
           await mafiaRoom.removeParticipant(participantId);
           
           // Notify remaining participants
@@ -428,9 +476,9 @@ export function registerSignalingEvents(io: SocketIOServer, socket: Socket): voi
             participantId
           });
           
-          signalingLogger.log(`Participant ${participantId} fully removed from room`);
+          signalingLogger.log(`Participant ${participantId} fully removed from room`, null, true);
         } else {
-          signalingLogger.log(`Participant ${participantId} has other connections, not removing`);
+          signalingLogger.log(`Participant ${participantId} has other connections, not removing`, null, true);
         }
       }, 5000); // Дать 5 секунд на возможное переподключение
     }

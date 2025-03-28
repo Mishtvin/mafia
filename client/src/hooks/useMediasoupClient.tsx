@@ -131,18 +131,32 @@ export function useMediasoupClient(): MediasoupResult {
           // Функция обработки ответа на joinRoom, чтобы не дублировать код
           const handleJoinRoomResponse = (response: any) => {
             if (response && response.success) {
-              debug('socket', `Joined room via Socket.IO: ${roomToken}`);
+              debug('socket', `Joined room via Socket.IO: ${roomToken}, response: ${JSON.stringify(response)}`);
               
               // Отписываемся от ответного события, если уже получили ответ через колбэк
               newSocket.off('joinRoomResponse');
               
               // Then use the mediasoup signaling
               debug('socket', 'Sending join-room request via mediasoup signaling');
+              
+              // Отладочная информация о текущих подписках
+              debug('listeners', `Current socket listeners:`, {
+                'join-room': newSocket.listeners('join-room').length,
+                'get-rtp-capabilities': newSocket.listeners('get-rtp-capabilities').length
+              });
+              
               newSocket.emit('join-room', { userId, nickname }, async (response: any) => {
                 debug('socket', 'Received join-room response', response);
                 
+                // Проверка является ли ответ undefined (отсутствие колбэка)
+                if (response === undefined) {
+                  debug('socket', 'WARNING: join-room response is undefined, possibly no server handler!');
+                  setState(prev => ({ ...prev, error: 'Server did not respond to join-room request' }));
+                  return;
+                }
+                
                 if (response && response.success) {
-                  debug('socket', `Setting ${response.participants?.length || 0} participants`);
+                  debug('socket', `Join-room successful with ${response.participants?.length || 0} participants`);
                   
                   // Debug the participant list we received before setting
                   debug('participants', 'Initial participants list:', 
@@ -156,6 +170,13 @@ export function useMediasoupClient(): MediasoupResult {
                   debug('socket', 'Requesting RTP capabilities');
                   newSocket.emit('get-rtp-capabilities', { userId }, async (response: any) => {
                     debug('socket', 'Received RTP capabilities response', response);
+                    
+                    // Проверка является ли ответ undefined
+                    if (response === undefined) {
+                      debug('socket', 'WARNING: get-rtp-capabilities response is undefined, possibly no server handler!');
+                      setState(prev => ({ ...prev, error: 'Server did not respond to RTP capabilities request' }));
+                      return;
+                    }
                     
                     if (response && response.success) {
                       try {
