@@ -77,19 +77,27 @@ export function useServerVideoStream(roomToken: string, userId: string) {
         newMap.set(streamUserId, { 
           userId: streamUserId, 
           stream, 
-          active: true 
+          active: true,
+          lastUpdateTime: Date.now() 
         });
         return newMap;
       });
+      
+      console.log(`[VIDEO] Created and registered new stream object for user ${streamUserId}`);
     };
     
     // Handle video chunk from server
     const handleVideoChunk = (data: any) => {
-      const { userId: chunkUserId, frameId, timestamp } = data;
+      const { userId: chunkUserId, frameId, timestamp, processed } = data;
       
       if (chunkUserId === userId) {
         // No need to process our own video chunks
         return;
+      }
+      
+      // Log receipt of processed chunks (server has processed and forwarded this)
+      if (processed && frameId && frameId % 180 === 0) {
+        console.log(`[VIDEO] Received processed video chunk #${frameId} from ${chunkUserId} (server relay)`);
       }
       
       // Keep track of active streams
@@ -133,11 +141,57 @@ export function useServerVideoStream(roomToken: string, userId: string) {
           return newMap;
         });
       }
+    };
+    
+    // Handle processed frames from server
+    const handleProcessedFrame = (data: any) => {
+      const { userId: frameUserId, frameId, timestamp, data: frameData, processed } = data;
       
-      // Log heartbeat frames for debugging
-      if (frameId && frameId % 100 === 0) {
-        console.log(`[VIDEO] Received heartbeat frame #${frameId} from ${chunkUserId}`);
+      // Skip our own frames
+      if (frameUserId === userId) return;
+      
+      // Log receipt of processed frames occasionally
+      if (frameId && frameId % 180 === 0) {
+        console.log(`[VIDEO] Received processed frame #${frameId} from ${frameUserId} via server`);
       }
+      
+      // Make sure this user has a stream object
+      if (!remoteStreams.has(frameUserId)) {
+        // Create a placeholder stream for this user
+        console.log(`[VIDEO] Creating stream for user ${frameUserId} from processed frame`);
+        
+        const newStream = new MediaStream();
+        const placeholderTrack = createEmptyVideoTrack(320, 240);
+        newStream.addTrack(placeholderTrack);
+        
+        setRemoteStreams(prev => {
+          const newMap = new Map(prev);
+          newMap.set(frameUserId, {
+            userId: frameUserId,
+            stream: newStream,
+            active: true,
+            lastUpdateTime: timestamp || Date.now()
+          });
+          return newMap;
+        });
+      }
+      
+      // Track this stream as active
+      activeStreams.set(frameUserId, true);
+      
+      // Update last update time to keep this stream marked as active
+      setRemoteStreams(prev => {
+        const newMap = new Map(prev);
+        const stream = newMap.get(frameUserId);
+        if (stream) {
+          newMap.set(frameUserId, {
+            ...stream,
+            active: true,
+            lastUpdateTime: timestamp || Date.now()
+          });
+        }
+        return newMap;
+      });
     };
     
     // Enhanced image frame handler from server
@@ -426,16 +480,22 @@ export function useServerVideoStream(roomToken: string, userId: string) {
     socket.on('video:newStream', handleNewStream);
     socket.on('video:chunk', handleVideoChunk);
     socket.on('video:image', handleVideoImage);
+    socket.on('video:processedFrame', handleProcessedFrame);
     socket.on('video:streamEnded', handleStreamEnded);
     socket.on('roomUpdate', handleRoomUpdate);
+    
+    console.log('[VIDEO] Registered all video stream event handlers');
     
     // Cleanup on unmount
     return () => {
       socket.off('video:newStream', handleNewStream);
       socket.off('video:chunk', handleVideoChunk);
       socket.off('video:image', handleVideoImage);
+      socket.off('video:processedFrame', handleProcessedFrame);
       socket.off('video:streamEnded', handleStreamEnded);
       socket.off('roomUpdate', handleRoomUpdate);
+      
+      console.log('[VIDEO] Cleaned up all video stream event handlers');
     };
   }, [isConnected, socket, userId, remoteStreams]);
   

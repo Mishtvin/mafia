@@ -156,24 +156,66 @@ export class VideoStreamManager {
     });
     
     // Handle image frame from clients (for devices without camera)
-    socket.on('video:image', (data: { roomToken: string, userId: string, image: string }) => {
-      const { roomToken, userId, image } = data;
+    socket.on('video:image', (data: { roomToken: string, userId: string, image: string, timestamp?: number, frameId?: number }) => {
+      const { roomToken, userId, image, timestamp = Date.now(), frameId } = data;
       
       // Update last active timestamp
       const roomStreams = this.activeStreams.get(roomToken);
-      if (roomStreams && roomStreams.has(userId)) {
-        const streamInfo = roomStreams.get(userId)!;
-        streamInfo.lastActive = Date.now();
-        streamInfo.active = true;
-        roomStreams.set(userId, streamInfo);
+      if (roomStreams) {
+        // If we don't have this stream registered yet, register it
+        if (!roomStreams.has(userId)) {
+          videoLogger.log(`Registering new stream from image`, { userId, roomToken });
+          roomStreams.set(userId, {
+            userId,
+            width: 320,  // Default width for image-based streams
+            height: 240, // Default height for image-based streams
+            frameRate: 15, // Default frame rate
+            active: true,
+            lastActive: Date.now()
+          });
+        } else {
+          // Just update the timestamp
+          const streamInfo = roomStreams.get(userId)!;
+          streamInfo.lastActive = Date.now();
+          streamInfo.active = true;
+          roomStreams.set(userId, streamInfo);
+        }
       }
       
-      // Forward the image to all other clients
-      socket.to(roomToken).emit('video:image', {
-        userId,
-        image,
-        timestamp: Date.now(),
-      });
+      try {
+        // Log occasionally to avoid console spam
+        if (frameId && frameId % 60 === 0) {
+          videoLogger.log(`Received image from user`, { 
+            userId, 
+            roomToken, 
+            size: image.length, 
+            frameId 
+          }, true);
+        }
+        
+        // Forward the image to all OTHER clients (excluding sender)
+        socket.to(roomToken).emit('video:image', {
+          userId,
+          image,
+          timestamp,
+          frameId
+        });
+        
+        // Log image distribution occasionally
+        if (frameId && frameId % 300 === 0) {
+          videoLogger.log(`Distributed image frame to room`, { 
+            userId, 
+            roomToken, 
+            frameId 
+          }, true);
+        }
+      } catch (err) {
+        videoLogger.log(`Error processing image frame`, { 
+          userId, 
+          roomToken, 
+          error: err instanceof Error ? err.message : String(err) 
+        });
+      }
     });
     
     // Handle when client stops streaming
@@ -222,27 +264,63 @@ export class VideoStreamManager {
     const userBuffer = roomBuffers.get(userId);
     if (!userBuffer || userBuffer.length === 0) return;
     
-    // For server-side processing, we could apply transformations, encoding
-    // or other processing here. For now, we'll just batch and forward frames
-    
-    // Sort frames by frameId
-    userBuffer.sort((a, b) => a.frameId - b.frameId);
-    
-    // Get the latest frame (simpler than processing all)
-    const latestFrame = userBuffer[userBuffer.length - 1];
-    
-    // Clear the buffer
-    userBuffer.length = 0;
-    
-    // Send the processed frame to all clients in the room
-    this.io.to(roomToken).emit('video:processedFrame', {
-      userId,
-      timestamp: latestFrame.timestamp,
-      data: latestFrame.data,
-      frameId: latestFrame.frameId,
-      processed: true,
-      serverTimestamp: Date.now()
-    });
+    try {
+      // Sort frames by frameId
+      userBuffer.sort((a, b) => a.frameId - b.frameId);
+      
+      // Get the latest frame (simpler than processing all)
+      const latestFrame = userBuffer[userBuffer.length - 1];
+      
+      // Clear the buffer
+      userBuffer.length = 0;
+      
+      // Check if this is a heartbeat frame (small data) or a real frame
+      const isHeartbeatFrame = latestFrame.data.length <= 4;
+      
+      if (isHeartbeatFrame) {
+        // Log heartbeat occasionally
+        if (latestFrame.frameId % 300 === 0) {
+          videoLogger.log(`Heartbeat frame received`, { 
+            userId, 
+            roomToken, 
+            frameId: latestFrame.frameId 
+          }, true);
+        }
+        return; // Don't forward heartbeat frames
+      }
+      
+      // Send the processed frame to all OTHER clients in the room (excluding sender)
+      // For chunks, use socket.to() to prevent sending back to sender
+      // For simplicity, we're using processedFrame event which we'll handle on client
+      this.io.to(roomToken).emit('video:processedFrame', {
+        userId,
+        timestamp: latestFrame.timestamp,
+        data: latestFrame.data,
+        frameId: latestFrame.frameId,
+        processed: true,
+        serverTimestamp: Date.now()
+      });
+      
+      // Log distributed frame occasionally
+      if (latestFrame.frameId % 300 === 0) {
+        videoLogger.log(`Processed and distributed frame`, { 
+          userId, 
+          roomToken, 
+          frameId: latestFrame.frameId, 
+          dataSize: latestFrame.data.length 
+        }, true);
+      }
+    } catch (err) {
+      videoLogger.log(`Error processing frames`, { 
+        userId, 
+        roomToken, 
+        error: err instanceof Error ? err.message : String(err),
+        bufferLength: userBuffer.length 
+      });
+      
+      // Clear buffer on error to prevent backlog
+      userBuffer.length = 0;
+    }
   }
   
   // Clean up inactive streams

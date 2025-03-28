@@ -38,6 +38,7 @@ export default function Room() {
   // Setup server-side video streaming
   const { 
     localStream,
+    remoteStreams,
     videoDevices,
     selectedDeviceId,
     toggleVideo,
@@ -167,6 +168,7 @@ export default function Room() {
     console.log(`[DEBUG ROOM] Room state update effect triggered`);
     console.log(`[DEBUG ROOM] - localStream exists: ${!!localStream}`);
     console.log(`[DEBUG ROOM] - participantsWithStreams count: ${participantsWithStreams.length}`);
+    console.log(`[DEBUG ROOM] - remoteStreams count: ${remoteStreams.length}`);
     
     if (localStream) {
       console.log(`[DEBUG ROOM] - localStream details:`, {
@@ -194,6 +196,7 @@ export default function Room() {
       const localParticipant = roomState.participants.find(p => p.userId === userId);
       console.log(`[DEBUG ROOM] Local participant found in roomState: ${!!localParticipant}`);
       
+      // Start with the current participants
       let updatedParticipants = [...participantsWithStreams];
       
       // If no participants, initialize with the ones from roomState
@@ -214,7 +217,10 @@ export default function Room() {
         updatedParticipants.push({
           ...localParticipant,
           stream: localStream || undefined,
-          hasVideo: hasVideoEnabled
+          hasVideo: hasVideoEnabled,
+          streamActive: hasVideoEnabled,
+          hasStream: !!localStream,
+          roomToken: token
         });
       }
       
@@ -226,7 +232,10 @@ export default function Room() {
           nickname,
           position: updatedParticipants.length, // Add at the end
           hasVideo: hasVideoEnabled,
-          stream: localStream || undefined
+          stream: localStream || undefined,
+          streamActive: hasVideoEnabled,
+          hasStream: !!localStream,
+          roomToken: token
         });
       }
       
@@ -268,6 +277,40 @@ export default function Room() {
         }
       }
       
+      // Update remote users with their streams from the server
+      if (remoteStreams.length > 0) {
+        console.log(`[DEBUG ROOM] Updating remote participant streams`);
+        
+        // Create a map of remote streams by userId for easy lookup
+        const remoteStreamMap = new Map();
+        remoteStreams.forEach((stream: { userId: string; stream: MediaStream; active: boolean }) => {
+          remoteStreamMap.set(stream.userId, stream);
+        });
+        
+        // Update each participant with their stream if available
+        updatedParticipants = updatedParticipants.map(p => {
+          // Skip local user since we've already handled them
+          if (p.userId === userId) return p;
+          
+          // Check if we have a remote stream for this participant
+          const remoteStream = remoteStreamMap.get(p.userId);
+          if (remoteStream && remoteStream.active) {
+            console.log(`[DEBUG ROOM] Found active remote stream for ${p.nickname}`);
+            return {
+              ...p,
+              stream: remoteStream.stream,
+              streamActive: remoteStream.active,
+              hasStream: true,
+              roomToken: token
+            };
+          }
+          
+          // Keep existing stream data if no update
+          return p;
+        });
+      }
+      
+      // Log the final state we're about to set
       console.log(`[DEBUG ROOM] Final updatedParticipants:`, updatedParticipants.map(p => ({
         userId: p.userId, 
         nickname: p.nickname,
@@ -285,7 +328,7 @@ export default function Room() {
         });
       }
     }
-  }, [participantsWithStreams, localStream, token, userId, roomState, setRoomState, selectedDeviceId, nickname, hasVideoEnabled]);
+  }, [participantsWithStreams, localStream, remoteStreams, token, userId, roomState, setRoomState, selectedDeviceId, nickname, hasVideoEnabled]);
 
   // Handle video toggle
   const handleToggleVideo = useCallback(() => {

@@ -55,15 +55,39 @@ export function VideoTile({
       if (data.userId === participant.userId && participant.hasVideo) {
         setReceivedImage(data.image);
         setFrameCount(prev => prev + 1);
+        
+        // Log occasionally to avoid console spam
+        if (data.frameId && data.frameId % 180 === 0) {
+          console.log(`[VIDEO] Received image frame #${data.frameId} for ${participant.nickname}`);
+        }
+      }
+    };
+    
+    // Handle processed frames from server
+    const onProcessedFrameReceived = (data: any) => {
+      // Only process frames for this participant
+      if (data.userId === participant.userId && participant.hasVideo) {
+        // Log receipt of processed frames occasionally
+        if (data.frameId && data.frameId % 180 === 0) {
+          console.log(`[VIDEO] Received processed frame #${data.frameId} for ${participant.nickname}`);
+        }
+        
+        // Mark that we've received a frame (incrementing counter helps trigger renders)
+        setFrameCount(prev => prev + 1);
       }
     };
     
     socket.on('video:image', onImageReceived);
+    socket.on('video:processedFrame', onProcessedFrameReceived);
+    
+    console.log(`[VIDEO] Registered frame handlers for ${participant.nickname}`);
     
     return () => {
       socket.off('video:image', onImageReceived);
+      socket.off('video:processedFrame', onProcessedFrameReceived);
+      console.log(`[VIDEO] Cleaned up frame handlers for ${participant.nickname}`);
     };
-  }, [socket, participant.userId, participant.hasVideo, isLocal]);
+  }, [socket, participant.userId, participant.hasVideo, participant.nickname, isLocal]);
   
   // Draw received image to canvas
   useEffect(() => {
