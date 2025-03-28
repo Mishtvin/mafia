@@ -1,5 +1,4 @@
 import React, { useContext } from 'react';
-import './App.css';
 import { Switch, Route } from "wouter";
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { Toaster } from 'react-hot-toast';
