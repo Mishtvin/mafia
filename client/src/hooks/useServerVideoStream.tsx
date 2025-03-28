@@ -22,6 +22,7 @@ interface VideoStream {
   userId: string;
   stream: MediaStream;
   active: boolean;
+  lastUpdateTime?: number;
 }
 
 // Custom hook for handling server-based video streaming
@@ -110,6 +111,103 @@ export function useServerVideoStream(roomToken: string, userId: string) {
       }
     };
     
+    // Handle image frame from server
+    const handleVideoImage = (data: { userId: string, image: string, timestamp: number }) => {
+      const { userId: imageUserId, image, timestamp } = data;
+      
+      console.log(`[VIDEO] Received image frame from ${imageUserId} at ${new Date(timestamp).toISOString()}`);
+      
+      if (imageUserId === userId) {
+        // No need to process our own video image
+        return;
+      }
+      
+      // Get the remote stream for this user
+      const currentStream = remoteStreams.get(imageUserId);
+      if (!currentStream) {
+        console.log(`[VIDEO] Cannot update image for ${imageUserId} - no stream found`);
+        return;
+      }
+      
+      try {
+        // Create an HTML Image element to load the frame
+        const imageElement = new Image();
+        imageElement.onload = () => {
+          // Create a canvas to draw the image
+          const canvas = document.createElement('canvas');
+          canvas.width = imageElement.width;
+          canvas.height = imageElement.height;
+          
+          // Draw the image to the canvas
+          const ctx = canvas.getContext('2d');
+          if (!ctx) return;
+          ctx.drawImage(imageElement, 0, 0);
+          
+          // If we have a MediaStream with a video track, update it
+          if (currentStream.stream) {
+            // Get the video element that this track is connected to
+            const videoElements = document.querySelectorAll('video');
+            // Convert NodeList to Array for TypeScript compatibility
+            const videoElementsArray = Array.from(videoElements);
+            let found = false;
+            
+            for (let i = 0; i < videoElementsArray.length; i++) {
+              const videoEl = videoElementsArray[i];
+              // Find the video element that has this stream as source
+              if (videoEl.srcObject === currentStream.stream) {
+                found = true;
+                // Update the pixels of the video with the new image
+                ctx.drawImage(imageElement, 0, 0, canvas.width, canvas.height);
+                
+                // This is a hack to update the video frame by drawing directly to it
+                try {
+                  // @ts-ignore - getContext is not in the standard API but works in modern browsers
+                  const videoCtx = videoEl.getContext('2d');
+                  if (videoCtx) {
+                    videoCtx.drawImage(imageElement, 0, 0, videoEl.width, videoEl.height);
+                  }
+                } catch (e) {
+                  console.warn('[VIDEO] Cannot update video pixel data directly:', e);
+                  
+                  // Alternative: create a new stream with this image
+                  // @ts-ignore - captureStream is not in the TS types but supported in browsers
+                  const newStream = canvas.captureStream();
+                  const videoTrack = newStream.getVideoTracks()[0];
+                  
+                  if (videoTrack) {
+                    // Replace the track in the existing stream
+                    const oldTracks = currentStream.stream.getVideoTracks();
+                    oldTracks.forEach(track => {
+                      currentStream.stream.removeTrack(track);
+                      track.stop();
+                    });
+                    currentStream.stream.addTrack(videoTrack);
+                  }
+                }
+                break; // We found the video element, no need to continue
+              }
+            }
+          }
+          
+          // Mark the stream as active
+          setRemoteStreams(prev => {
+            const newMap = new Map(prev);
+            newMap.set(imageUserId, { 
+              ...currentStream, 
+              active: true,
+              lastUpdateTime: Date.now()
+            });
+            return newMap;
+          });
+        };
+        
+        // Trigger the image load
+        imageElement.src = image;
+      } catch (err) {
+        console.error('[VIDEO] Error processing image frame:', err);
+      }
+    };
+    
     // Handle stream ended notification
     const handleStreamEnded = (data: { userId: string }) => {
       const { userId: endedUserId } = data;
@@ -165,6 +263,7 @@ export function useServerVideoStream(roomToken: string, userId: string) {
     // Register event handlers
     socket.on('video:newStream', handleNewStream);
     socket.on('video:chunk', handleVideoChunk);
+    socket.on('video:image', handleVideoImage);
     socket.on('video:streamEnded', handleStreamEnded);
     socket.on('roomUpdate', handleRoomUpdate);
     
@@ -172,6 +271,7 @@ export function useServerVideoStream(roomToken: string, userId: string) {
     return () => {
       socket.off('video:newStream', handleNewStream);
       socket.off('video:chunk', handleVideoChunk);
+      socket.off('video:image', handleVideoImage);
       socket.off('video:streamEnded', handleStreamEnded);
       socket.off('roomUpdate', handleRoomUpdate);
     };
