@@ -94,6 +94,8 @@ export type ParticipantState = {
   videoWidth?: number;
   videoHeight?: number;
   frameRate?: number;
+  // Optional room token for socket.io connectivity
+  roomToken?: string;
 };
 
 // Video stream related types

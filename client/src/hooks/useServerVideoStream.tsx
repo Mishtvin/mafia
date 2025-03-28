@@ -9,6 +9,15 @@ const videoConfig = {
   frameRate: { ideal: 15, max: 24 }   // 15fps is good enough for video conferencing with many participants
 };
 
+// Configuration for canvas-based video capture
+const canvasConfig = {
+  captureInterval: 1000 / 15,  // Capture at 15fps
+  quality: 0.6,                // JPEG quality (0-1)
+  maxSize: 40 * 1024,          // 40KB max for each frame
+  resizeWidth: 320,            // Width to resize captured frames to
+  resizeHeight: 240            // Height to resize captured frames to
+};
+
 interface VideoStream {
   userId: string;
   stream: MediaStream;
@@ -245,16 +254,26 @@ export function useServerVideoStream(roomToken: string, userId: string) {
     // Update server about our video status
     updateVideoStatus(userId, true);
     
-    // Setup simulated video streaming to server 
-    // For server-side architecture demonstration, we'll send small metadata packets
-    // In a real implementation, we would capture frames, encode them with WebCodecs, 
-    // and send the binary data
+    // Setup actual video streaming to server
+    // We'll capture frames from the video element using canvas and send them as JPEG images
+    
+    // Create a canvas for capturing frames
+    const canvas = document.createElement('canvas');
+    canvas.width = canvasConfig.resizeWidth;
+    canvas.height = canvasConfig.resizeHeight;
+    const ctx = canvas.getContext('2d');
+    
+    // Create a video element to connect to the stream
+    const videoEl = document.createElement('video');
+    videoEl.srcObject = localStream;
+    videoEl.autoplay = true;
+    videoEl.muted = true;
+    videoEl.play().catch(err => console.error('[VIDEO] Error playing video for frame capture:', err));
     
     let lastFrameTime = performance.now();
-    const targetFrameInterval = 1000 / 15; // 15 fps
     
     const sendFrame = () => {
-      if (!socket.connected || !hasVideoEnabled) {
+      if (!socket.connected || !hasVideoEnabled || !ctx) {
         animationFrameRef.current = null;
         return;
       }
@@ -263,18 +282,38 @@ export function useServerVideoStream(roomToken: string, userId: string) {
       const elapsed = now - lastFrameTime;
       
       // Only send frames at the target frame rate to reduce load
-      if (elapsed >= targetFrameInterval) {
+      if (elapsed >= canvasConfig.captureInterval) {
         const frameId = frameIdCounter.current++;
         
-        // Send a very small packet with just enough info for the server to know
-        // that this client is still actively sending video
-        socket.emit('video:chunk', {
-          roomToken,
-          userId,
-          timestamp: Date.now(),
-          data: new Uint8Array(4), // Minimal data - just a ping
-          frameId
-        });
+        try {
+          // Draw the current video frame to canvas
+          ctx.drawImage(videoEl, 0, 0, canvas.width, canvas.height);
+          
+          // Convert to JPEG and send as base64 string
+          // This is much more efficient than sending raw pixel data
+          const imageData = canvas.toDataURL('image/jpeg', canvasConfig.quality);
+          
+          // For every 30th frame, send a full image
+          if (frameId % 30 === 0) {
+            // Send the image as a separate event that's optimized for images
+            socket.emit('video:image', {
+              roomToken,
+              userId,
+              image: imageData
+            });
+          } else {
+            // Send a small ping to keep the connection active
+            socket.emit('video:chunk', {
+              roomToken,
+              userId,
+              timestamp: Date.now(),
+              data: new Uint8Array(4), // Minimal data for non-keyframes
+              frameId
+            });
+          }
+        } catch (err) {
+          console.error('[VIDEO] Error capturing frame:', err);
+        }
         
         lastFrameTime = now;
       }
@@ -356,6 +395,58 @@ export function useServerVideoStream(roomToken: string, userId: string) {
   const switchCamera = useCallback(async (deviceId: string) => {
     if (deviceId === selectedDeviceId) return;
     
+    // Handle the special "no-camera" value
+    if (deviceId === "no-camera" || deviceId === "camera-id-missing") {
+      // Stop current stream
+      if (localStream) {
+        // Tell server we're stopping our stream
+        if (socket && socket.connected && isStreamingToServer) {
+          socket.emit('video:stop', {
+            roomToken,
+            userId
+          });
+          setIsStreamingToServer(false);
+        }
+        
+        // Cancel animation frame
+        if (animationFrameRef.current) {
+          cancelAnimationFrame(animationFrameRef.current);
+          animationFrameRef.current = null;
+        }
+        
+        // Stop all tracks
+        localStream.getTracks().forEach(track => track.stop());
+        
+        // Create a placeholder canvas stream
+        const canvas = document.createElement('canvas');
+        canvas.width = 320;
+        canvas.height = 240;
+        
+        // Draw a placeholder in the canvas
+        const ctx = canvas.getContext('2d');
+        if (ctx) {
+          ctx.fillStyle = '#222222';
+          ctx.fillRect(0, 0, canvas.width, canvas.height);
+          
+          // Draw text
+          ctx.fillStyle = '#aaaaaa';
+          ctx.font = '20px Arial';
+          ctx.textAlign = 'center';
+          ctx.fillText('No camera selected', canvas.width / 2, canvas.height / 2);
+        }
+        
+        // @ts-ignore - captureStream() is not in the TS types but is supported in modern browsers
+        const placeholderStream = canvas.captureStream(15);
+        setLocalStream(placeholderStream);
+        setHasVideoEnabled(false);
+        setSelectedDeviceId(deviceId);
+        
+        // Update server about our video status
+        updateVideoStatus(userId, false);
+      }
+      return;
+    }
+    
     try {
       // Stop current stream
       if (localStream) {
@@ -431,7 +522,8 @@ export function useServerVideoStream(roomToken: string, userId: string) {
           stream: localStream || undefined,
           hasStream: !!localStream,
           streamActive: !!localStream && hasVideoEnabled,
-          streamTracks: localStream?.getVideoTracks().length || 0
+          streamTracks: localStream?.getVideoTracks().length || 0,
+          roomToken: roomToken
         };
       }
       
@@ -441,13 +533,14 @@ export function useServerVideoStream(roomToken: string, userId: string) {
         ...participant,
         stream: remoteStream?.stream,
         hasStream: !!remoteStream?.stream,
-        streamActive: remoteStream?.active || false
+        streamActive: remoteStream?.active || false,
+        roomToken: roomToken
       };
     });
     
     console.log('[DEBUG ROOM] Final updatedParticipants:', updatedParticipants);
     return updatedParticipants;
-  }, [userId, localStream, remoteStreams, hasVideoEnabled]);
+  }, [userId, localStream, remoteStreams, hasVideoEnabled, roomToken]);
   
   return {
     localStream,

@@ -76,7 +76,7 @@ export function useDndSorting(
         });
       }
       
-      // Pass the position updates to the callback 1
+      // Pass the position updates to the callback
       onPositionsChange(positionUpdates);
     } catch (error) {
       console.error("Error processing drop:", error);

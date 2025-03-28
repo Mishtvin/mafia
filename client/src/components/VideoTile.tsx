@@ -1,5 +1,6 @@
-import { useRef, useEffect, useState } from "react";
+import { useRef, useEffect, useState, useCallback } from "react";
 import { ParticipantState } from "@shared/schema";
+import { useSocketIO } from "@/hooks/useSocketIO";
 
 interface VideoTileProps {
   participant: ParticipantState;
@@ -21,6 +22,11 @@ export function VideoTile({
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [frameCount, setFrameCount] = useState(0);
+  const [receivedImage, setReceivedImage] = useState<string | null>(null);
+  const animationRef = useRef<number | null>(null);
+  
+  // Get socket connection for receiving frames
+  const { socket } = useSocketIO(participant.roomToken || "");
   
   // Connect the stream to the video element when it changes
   useEffect(() => {
@@ -40,15 +46,72 @@ export function VideoTile({
     };
   }, [participant.stream, participant.nickname, isLocal, participant.hasVideo]);
   
-  // Set up the canvas-based visualization for video placeholders
+  // Handle receiving image frames from server
   useEffect(() => {
-    if (!participant.hasVideo || !canvasRef.current) return;
+    if (!socket || isLocal) return;
+    
+    const onImageReceived = (data: any) => {
+      // Only process images for this participant
+      if (data.userId === participant.userId && participant.hasVideo) {
+        setReceivedImage(data.image);
+        setFrameCount(prev => prev + 1);
+      }
+    };
+    
+    socket.on('video:image', onImageReceived);
+    
+    return () => {
+      socket.off('video:image', onImageReceived);
+    };
+  }, [socket, participant.userId, participant.hasVideo, isLocal]);
+  
+  // Draw received image to canvas
+  useEffect(() => {
+    if (!canvasRef.current || !receivedImage) return;
+    
+    const canvas = canvasRef.current;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    
+    // Create image element
+    const img = new Image();
+    img.onload = () => {
+      // Clear canvas
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      
+      // Draw image
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+      
+      // Add user indicator
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
+      ctx.fillRect(0, canvas.height - 30, canvas.width, 30);
+      
+      // Add frame info
+      ctx.fillStyle = 'white';
+      ctx.font = '12px Arial';
+      ctx.textAlign = 'right';
+      ctx.fillText(`Frame: ${frameCount}`, canvas.width - 10, canvas.height - 10);
+    };
+    img.src = receivedImage;
+  }, [receivedImage, frameCount]);
+  
+  // Set up the canvas-based visualization for video placeholders or when no frame received yet
+  useEffect(() => {
+    // Don't run this for local video (which uses the real video stream)
+    // or if we already received frames from server
+    if (isLocal || receivedImage || !participant.hasVideo || !canvasRef.current) return;
     
     const ctx = canvasRef.current.getContext('2d');
     if (!ctx) return;
     
-    // Create a simple animation to simulate active video
-    const interval = setInterval(() => {
+    // Cancel any existing animation
+    if (animationRef.current) {
+      cancelAnimationFrame(animationRef.current);
+      animationRef.current = null;
+    }
+    
+    // Create a simple animation to simulate active video while waiting for actual frames
+    const animate = () => {
       if (!canvasRef.current) return;
       
       const canvas = canvasRef.current;
@@ -70,7 +133,7 @@ export function VideoTile({
       // Draw avatar circle that moves slightly
       ctx.beginPath();
       ctx.arc(x, y, 40, 0, Math.PI * 2);
-      ctx.fillStyle = isLocal ? '#3b82f6' : '#6366f1';
+      ctx.fillStyle = '#6366f1';
       ctx.fill();
       
       // Draw initial
@@ -83,10 +146,8 @@ export function VideoTile({
       // Add info text
       ctx.fillStyle = '#aaa';
       ctx.font = '14px Arial';
-      ctx.fillText(`Video streaming in progress...`, width/2, height - 30);
-      
-      // Draw animation frame counter (invisible but for tracking)
-      setFrameCount(prev => prev + 1);
+      ctx.textAlign = 'center';
+      ctx.fillText(`Waiting for video stream...`, width/2, height - 30);
       
       // Draw a simple "signal" indicator to show activity
       const bars = 5;
@@ -110,10 +171,24 @@ export function VideoTile({
         );
       }
       
-    }, 50); // 20fps animation
+      // Track animation
+      setFrameCount(prev => prev + 1);
+      
+      // Schedule next frame
+      animationRef.current = requestAnimationFrame(animate);
+    };
     
-    return () => clearInterval(interval);
-  }, [participant.hasVideo, participant.nickname, isLocal]);
+    // Start animation
+    animationRef.current = requestAnimationFrame(animate);
+    
+    // Cleanup
+    return () => {
+      if (animationRef.current) {
+        cancelAnimationFrame(animationRef.current);
+        animationRef.current = null;
+      }
+    };
+  }, [participant.hasVideo, participant.nickname, isLocal, receivedImage]);
   
   return (
     <div 
@@ -128,24 +203,24 @@ export function VideoTile({
       data-position={participant.position}
     >
       <div className="video-container relative bg-gray-900 w-full aspect-video">
-        {/* Real video - hidden for now until the full implementation is complete */}
-        <video
-          ref={videoRef}
-          autoPlay
-          playsInline
-          muted
-          className={`w-full h-full object-cover hidden`} 
-        />
-        
-        {/* Canvas-based visualization for when video is on */}
-        {participant.hasVideo && (
-          <canvas
-            ref={canvasRef}
-            width={320}
-            height={180}
+        {/* Local video stream for local user */}
+        {isLocal && participant.hasVideo && (
+          <video
+            ref={videoRef}
+            autoPlay
+            playsInline
+            muted
             className="w-full h-full object-cover"
           />
         )}
+        
+        {/* Canvas-based visualization and frame rendering for everyone */}
+        <canvas
+          ref={canvasRef}
+          width={320}
+          height={180}
+          className={`w-full h-full object-cover ${isLocal && participant.hasVideo ? 'hidden' : ''}`}
+        />
         
         {/* Placeholder when video is off */}
         {!participant.hasVideo && (
@@ -160,7 +235,7 @@ export function VideoTile({
         </div>
         
         {/* Video status indicator */}
-        <div className="absolute top-2 right-2">
+        <div className="absolute top-2 right-2 flex items-center">
           <span 
             className={`material-icons ${
               participant.hasVideo ? 'text-success' : 'text-error'
@@ -169,6 +244,16 @@ export function VideoTile({
           >
             {participant.hasVideo ? "videocam" : "videocam_off"}
           </span>
+          
+          {/* Server icon to indicate server-processed video */}
+          {participant.hasVideo && !isLocal && (
+            <span 
+              className="material-icons text-blue-400 bg-black bg-opacity-50 p-1 rounded-full ml-1"
+              title="Server Processed Video"
+            >
+              dns
+            </span>
+          )}
         </div>
       </div>
     </div>

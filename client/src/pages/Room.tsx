@@ -176,7 +176,8 @@ export default function Room() {
               stream: localStream, 
               hasVideo: hasVideoEnabled,
               streamActive: hasVideoEnabled,
-              hasStream: true
+              hasStream: true,
+              roomToken: token
             };
           }
           return p;
@@ -192,7 +193,8 @@ export default function Room() {
             hasVideo: hasVideoEnabled,
             stream: localStream,
             streamActive: hasVideoEnabled,
-            hasStream: true
+            hasStream: true,
+            roomToken: token
           });
         }
       }
@@ -293,7 +295,7 @@ export default function Room() {
                 Camera:
               </label>
               <Select
-                value={selectedDeviceId}
+                value={selectedDeviceId || "no-camera"}
                 onValueChange={switchCamera}
                 disabled={videoDevices.length === 0}
               >
@@ -302,11 +304,11 @@ export default function Room() {
                 </SelectTrigger>
                 <SelectContent>
                   {videoDevices.length === 0 ? (
-                    <div className="px-2 py-4 text-sm text-muted-foreground">No cameras detected</div>
+                    <SelectItem value="no-camera">No cameras detected</SelectItem>
                   ) : (
                     videoDevices.map(device => (
-                      <SelectItem key={device.deviceId} value={device.deviceId}>
-                        {device.label || `Camera ${device.deviceId.slice(0, 5)}...`}
+                      <SelectItem key={device.deviceId} value={device.deviceId || "camera-id-missing"}>
+                        {device.label || `Camera ${device.deviceId?.slice(0, 5) || "unknown"}...`}
                       </SelectItem>
                     ))
                   )}
