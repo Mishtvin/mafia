@@ -87,6 +87,17 @@ export function useMediasoupClient(): MediasoupResult {
     try {
       debug('connect', `Connecting to room ${roomToken} with userId ${userId} and nickname ${nickname}`);
       
+      // Проверяем, не подключены ли мы уже к этой комнате с теми же параметрами
+      if (
+        socketRef.current && 
+        roomTokenRef.current === roomToken && 
+        userIdRef.current === userId && 
+        nicknameRef.current === nickname
+      ) {
+        console.log('Already connected to room with same parameters, skipping reconnect');
+        return;
+      }
+      
       // If socket already exists, disconnect
       if (socketRef.current) {
         debug('connect', 'Disconnecting existing socket connection');
@@ -109,142 +120,18 @@ export function useMediasoupClient(): MediasoupResult {
       newSocket.on('connect', () => {
         debug('socket', `Socket connected with ID: ${newSocket.id}`);
         
-        // Добавляем проверку наличия текущих обработчиков на сервере
+        // Проверяем активные обработчики на сервере
         newSocket.emit('active-handlers', (response: any) => {
-          debug('socket', 'Active handlers on server:', response || 'No response from server (active-handlers event not registered)');
+          debug('socket', 'Active handlers on server:', response);
         });
         
-        // Join the room
+        // Тестируем новые отладочные обработчики
         setTimeout(() => {
-          debug('socket', `Joining room with userId: ${userId}, nickname: ${nickname}`);
-          
-          // First join room via socket.io, с обработкой ошибок и фолбеком на событие
-          const joinRoomRequest = { roomToken, userId, nickname };
-          
-          // Отладочная проверка событий на которые подписан сервер
-          debug('handlers', `Testing server event handlers registration...`);
-          newSocket.emit('test-handlers', { events: ['joinRoom', 'join-room', 'get-rtp-capabilities'] }, (response: any) => {
-            debug('handlers', `Server handlers test response:`, response || 'No response (event not registered)');
-          });
-          
-          // Подписываемся на ответное событие для случая, если колбэк не сработает
-          newSocket.once('joinRoomResponse', (response: any) => {
-            debug('socket', `Received joinRoomResponse via event: ${JSON.stringify(response)}`);
-            handleJoinRoomResponse(response);
-          });
-          
-          // Отправляем событие с обычным колбеком
-          newSocket.emit('joinRoom', joinRoomRequest, (response: any) => {
-            debug('socket', `Received joinRoom callback response: ${JSON.stringify(response)}`);
-            handleJoinRoomResponse(response);
-          });
-          
-          // Функция обработки ответа на joinRoom, чтобы не дублировать код
-          const handleJoinRoomResponse = (response: any) => {
-            if (response && response.success) {
-              debug('socket', `Joined room via Socket.IO: ${roomToken}, response: ${JSON.stringify(response)}`);
-              
-              // Отписываемся от ответного события, если уже получили ответ через колбэк
-              newSocket.off('joinRoomResponse');
-              
-              // Then use the mediasoup signaling
-              debug('socket', 'Sending join-room request via mediasoup signaling');
-              
-              // Отладочная информация о текущих подписках
-              debug('listeners', `Current socket listeners:`, {
-                'join-room': newSocket.listeners('join-room').length,
-                'get-rtp-capabilities': newSocket.listeners('get-rtp-capabilities').length
-              });
-              
-              // Напрямую проверяем, есть ли обработчик для join-room на сервере
-              debug('socket', 'Testing join-room handler on server...');
-              const testTimeout = setTimeout(() => {
-                debug('socket', 'WARNING: No response to join-room test after 1 second!');
-                // Попробуем отправить без ожидания ответа
-                debug('socket', 'Trying to send join-room without waiting for callback...');
-                newSocket.emit('join-room', { userId, nickname });
-                
-                // Принудительно пробуем следующий шаг через 500ms
-                setTimeout(() => {
-                  debug('socket', 'Forcing next step: requesting RTP capabilities directly');
-                  newSocket.emit('get-rtp-capabilities', { userId }, async (rtpResponse: any) => {
-                    debug('socket', 'Manual RTP capabilities response:', rtpResponse);
-                    
-                    if (rtpResponse && rtpResponse.success) {
-                      try {
-                        debug('device', 'Manually loading device with RTP capabilities', rtpResponse.rtpCapabilities);
-                        await state.device?.load({ routerRtpCapabilities: rtpResponse.rtpCapabilities });
-                        setState(prev => ({ ...prev, connected: true }));
-                        debug('device', 'MediaSoup device loaded successfully (manual)');
-                      } catch (error) {
-                        debug('device', 'Manual device loading failed', error);
-                      }
-                    }
-                  });
-                }, 500);
-              }, 1000);
-              
-              // Теперь отправляем событие join-room
-              newSocket.emit('join-room', { userId, nickname }, async (response: any) => {
-                clearTimeout(testTimeout); // Очищаем таймаут, так как получили ответ
-                debug('socket', 'Received join-room response', response);
-                
-                // Проверка является ли ответ undefined (отсутствие колбэка)
-                if (response === undefined) {
-                  debug('socket', 'WARNING: join-room response is undefined, possibly no server handler!');
-                  setState(prev => ({ ...prev, error: 'Server did not respond to join-room request' }));
-                  return;
-                }
-                
-                if (response && response.success) {
-                  debug('socket', `Join-room successful with ${response.participants?.length || 0} participants`);
-                  
-                  // Debug the participant list we received before setting
-                  debug('participants', 'Initial participants list:', 
-                    (response.participants || []).map((p: any) => ({ id: p.id, nickname: p.nickname }))
-                  );
-                  
-                  // Set participants list, ensuring it's an array
-                  setParticipants(response.participants || []);
-                  
-                  // Load device with router RTP capabilities
-                  debug('socket', 'Requesting RTP capabilities');
-                  newSocket.emit('get-rtp-capabilities', { userId }, async (response: any) => {
-                    debug('socket', 'Received RTP capabilities response', response);
-                    
-                    // Проверка является ли ответ undefined
-                    if (response === undefined) {
-                      debug('socket', 'WARNING: get-rtp-capabilities response is undefined, possibly no server handler!');
-                      setState(prev => ({ ...prev, error: 'Server did not respond to RTP capabilities request' }));
-                      return;
-                    }
-                    
-                    if (response && response.success) {
-                      try {
-                        debug('device', 'Loading device with RTP capabilities', response.rtpCapabilities);
-                        await state.device?.load({ routerRtpCapabilities: response.rtpCapabilities });
-                        setState(prev => ({ ...prev, connected: true }));
-                        debug('device', 'MediaSoup device loaded successfully');
-                      } catch (error) {
-                        debug('device', 'Failed to load device', error);
-                        setState(prev => ({ ...prev, error: 'Failed to initialize video system' }));
-                      }
-                    } else {
-                      debug('device', 'Failed to get RTP capabilities', response?.error || 'Unknown error');
-                      setState(prev => ({ ...prev, error: 'Failed to get streaming capabilities' }));
-                    }
-                  });
-                } else {
-                  debug('socket', 'Failed to join room', response?.error || 'Unknown error');
-                  setState(prev => ({ ...prev, error: 'Failed to join room' }));
-                }
-              });
-            } else {
-              debug('socket', 'Failed to join room via Socket.IO', response?.error || 'Unknown error');
-              setState(prev => ({ ...prev, error: 'Failed to join Socket.IO room' }));
-            }
-          };
-        }, 500); // Small delay to ensure socket connection is stable
+          testServerEventHandlers();
+        }, 500);
+        
+        // Выполняем подключение к комнате
+        joinRoom(roomToken, userId, nickname);
       });
       
       // Handle participant joined
@@ -721,41 +608,209 @@ export function useMediasoupClient(): MediasoupResult {
   // Clean up on unmount
   useEffect(() => {
     return () => {
-      debug('cleanup', 'Running cleanup on unmount');
-      
-      // Close and clean up all transports and consumers
-      if (state.producerTransport) {
-        debug('cleanup', 'Closing producer transport');
-        state.producerTransport.close();
-      }
-      
-      debug('cleanup', `Closing ${state.consumerTransports.size} consumer transports`);
-      state.consumerTransports.forEach((transport, participantId) => {
-        debug('cleanup', `Closing consumer transport for participant: ${participantId}`);
-        transport.close();
-      });
-      
-      debug('cleanup', `Closing ${state.consumers.size} consumers`);
-      state.consumers.forEach((consumer, participantId) => {
-        debug('cleanup', `Closing consumer for participant: ${participantId}`);
-        consumer.close();
-      });
-      
-      // Stop local stream
-      if (localStream) {
-        debug('cleanup', 'Stopping local stream tracks');
-        localStream.getTracks().forEach(track => track.stop());
-      }
-      
-      // Disconnect socket
-      if (socketRef.current) {
-        debug('cleanup', 'Disconnecting socket');
-        socketRef.current.disconnect();
-      }
-      
-      debug('cleanup', 'Cleanup complete');
+      cleanup();
     };
   }, [state.producerTransport, state.consumerTransports, state.consumers, localStream]);
+  
+  // Test server event handlers
+  const testServerEventHandlers = useCallback(() => {
+    debug('handlers', 'Testing server event handlers registration...');
+    
+    if (socketRef.current) {
+      // Тестируем новый обработчик test-join-room
+      socketRef.current.emit('test-join-room', { test: true }, (response: any) => {
+        debug('handlers', 'Test join-room response:', response);
+      });
+      
+      // Также проверяем debug-events для получения списка зарегистрированных событий
+      socketRef.current.emit('debug-events', (response: any) => {
+        debug('handlers', 'Server registered events:', response);
+      });
+    } else {
+      debug('handlers', 'Cannot test handlers: socket not connected');
+    }
+  }, []);
+  
+  // Join room
+  const joinRoom = useCallback(async (roomToken: string, userId: string, nickname: string) => {
+    try {
+      debug('socket', `Joining room with userId: ${userId}, nickname: ${nickname}`);
+      
+      // Проверяем, что сокет существует
+      if (!socketRef.current) {
+        debug('socket', 'Socket is not initialized, cannot join room');
+        setState(prev => ({ ...prev, error: 'Socket connection not available' }));
+        return;
+      }
+      
+      // First join room via socket.io, с обработкой ошибок и фолбеком на событие
+      const joinRoomRequest = { roomToken, userId, nickname };
+      
+      // Отладочная проверка событий на которые подписан сервер
+      debug('handlers', `Testing server event handlers registration...`);
+      socketRef.current.emit('test-handlers', { events: ['joinRoom', 'join-room', 'get-rtp-capabilities'] }, (response: any) => {
+        debug('handlers', `Server handlers test response:`, response || 'No response (event not registered)');
+      });
+      
+      // Подписываемся на ответное событие для случая, если колбэк не сработает
+      socketRef.current.once('joinRoomResponse', (response: any) => {
+        debug('socket', `Received joinRoomResponse via event: ${JSON.stringify(response)}`);
+        handleJoinRoomResponse(response);
+      });
+      
+      // Отправляем событие с обычным колбеком
+      socketRef.current.emit('joinRoom', joinRoomRequest, (response: any) => {
+        debug('socket', `Received joinRoom callback response: ${JSON.stringify(response)}`);
+        handleJoinRoomResponse(response);
+      });
+      
+      // Функция обработки ответа на joinRoom, чтобы не дублировать код
+      const handleJoinRoomResponse = (response: any) => {
+        if (response && response.success) {
+          debug('socket', `Joined room via Socket.IO: ${roomToken}, response: ${JSON.stringify(response)}`);
+          
+          // Отписываемся от ответного события, если уже получили ответ через колбэк
+          socketRef.current.off('joinRoomResponse');
+          
+          // Then use the mediasoup signaling
+          debug('socket', 'Sending join-room request via mediasoup signaling');
+          
+          // Отладочная информация о текущих подписках
+          debug('listeners', `Current socket listeners:`, {
+            'join-room': socketRef.current.listeners('join-room').length,
+            'get-rtp-capabilities': socketRef.current.listeners('get-rtp-capabilities').length
+          });
+          
+          // Напрямую проверяем, есть ли обработчик для join-room на сервере
+          debug('socket', 'Testing join-room handler on server...');
+          const testTimeout = setTimeout(() => {
+            debug('socket', 'WARNING: No response to join-room test after 1 second!');
+            // Попробуем отправить без ожидания ответа
+            debug('socket', 'Trying to send join-room without waiting for callback...');
+            socketRef.current.emit('join-room', { userId, nickname });
+            
+            // Принудительно пробуем следующий шаг через 500ms
+            setTimeout(() => {
+              debug('socket', 'Forcing next step: requesting RTP capabilities directly');
+              socketRef.current.emit('get-rtp-capabilities', { userId }, async (rtpResponse: any) => {
+                debug('socket', 'Manual RTP capabilities response:', rtpResponse);
+                
+                if (rtpResponse && rtpResponse.success) {
+                  try {
+                    debug('device', 'Manually loading device with RTP capabilities', rtpResponse.rtpCapabilities);
+                    await state.device?.load({ routerRtpCapabilities: rtpResponse.rtpCapabilities });
+                    setState(prev => ({ ...prev, connected: true }));
+                    debug('device', 'MediaSoup device loaded successfully (manual)');
+                  } catch (error) {
+                    debug('device', 'Manual device loading failed', error);
+                  }
+                }
+              });
+            }, 500);
+          }, 1000);
+          
+          // Теперь отправляем событие join-room
+          socketRef.current.emit('join-room', { userId, nickname }, async (response: any) => {
+            clearTimeout(testTimeout); // Очищаем таймаут, так как получили ответ
+            debug('socket', 'Received join-room response', response);
+            
+            // Проверка является ли ответ undefined (отсутствие колбэка)
+            if (response === undefined) {
+              debug('socket', 'WARNING: join-room response is undefined, possibly no server handler!');
+              setState(prev => ({ ...prev, error: 'Server did not respond to join-room request' }));
+              return;
+            }
+            
+            if (response && response.success) {
+              debug('socket', `Join-room successful with ${response.participants?.length || 0} participants`);
+              
+              // Debug the participant list we received before setting
+              debug('participants', 'Initial participants list:', 
+                (response.participants || []).map((p: any) => ({ id: p.id, nickname: p.nickname }))
+              );
+              
+              // Set participants list, ensuring it's an array
+              setParticipants(response.participants || []);
+              
+              // Load device with router RTP capabilities
+              debug('socket', 'Requesting RTP capabilities');
+              socketRef.current.emit('get-rtp-capabilities', { userId }, async (response: any) => {
+                debug('socket', 'Received RTP capabilities response', response);
+                
+                // Проверка является ли ответ undefined
+                if (response === undefined) {
+                  debug('socket', 'WARNING: get-rtp-capabilities response is undefined, possibly no server handler!');
+                  setState(prev => ({ ...prev, error: 'Server did not respond to RTP capabilities request' }));
+                  return;
+                }
+                
+                if (response && response.success) {
+                  try {
+                    debug('device', 'Loading device with RTP capabilities', response.rtpCapabilities);
+                    await state.device?.load({ routerRtpCapabilities: response.rtpCapabilities });
+                    setState(prev => ({ ...prev, connected: true }));
+                    debug('device', 'MediaSoup device loaded successfully');
+                  } catch (error) {
+                    debug('device', 'Failed to load device', error);
+                    setState(prev => ({ ...prev, error: 'Failed to initialize video system' }));
+                  }
+                } else {
+                  debug('device', 'Failed to get RTP capabilities', response?.error || 'Unknown error');
+                  setState(prev => ({ ...prev, error: 'Failed to get streaming capabilities' }));
+                }
+              });
+            } else {
+              debug('socket', 'Failed to join room', response?.error || 'Unknown error');
+              setState(prev => ({ ...prev, error: 'Failed to join room' }));
+            }
+          });
+        } else {
+          debug('socket', 'Failed to join room via Socket.IO', response?.error || 'Unknown error');
+          setState(prev => ({ ...prev, error: 'Failed to join Socket.IO room' }));
+        }
+      };
+    } catch (error) {
+      console.error('Error joining room:', error);
+      setState(prev => ({ ...prev, error: 'Failed to join room' }));
+    }
+  }, [socketRef.current, userIdRef.current, nicknameRef.current]);
+  
+  // Cleanup function
+  const cleanup = () => {
+    debug('cleanup', 'Running cleanup');
+    
+    // Close and clean up all transports and consumers
+    if (state.producerTransport) {
+      debug('cleanup', 'Closing producer transport');
+      state.producerTransport.close();
+    }
+    
+    debug('cleanup', `Closing ${state.consumerTransports.size} consumer transports`);
+    state.consumerTransports.forEach((transport, participantId) => {
+      debug('cleanup', `Closing consumer transport for participant: ${participantId}`);
+      transport.close();
+    });
+    
+    debug('cleanup', `Closing ${state.consumers.size} consumers`);
+    state.consumers.forEach((consumer, participantId) => {
+      debug('cleanup', `Closing consumer for participant: ${participantId}`);
+      consumer.close();
+    });
+    
+    // Stop local stream
+    if (localStream) {
+      debug('cleanup', 'Stopping local stream tracks');
+      localStream.getTracks().forEach(track => track.stop());
+    }
+    
+    // Disconnect socket
+    if (socketRef.current) {
+      debug('cleanup', 'Disconnecting socket');
+      socketRef.current.disconnect();
+    }
+    
+    debug('cleanup', 'Cleanup complete');
+  };
   
   return {
     device: state.device,
@@ -768,6 +823,6 @@ export function useMediasoupClient(): MediasoupResult {
     connect,
     startLocalVideo,
     stopLocalVideo,
-    updatePosition
+    updatePosition,
   };
 }

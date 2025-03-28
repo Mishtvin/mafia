@@ -56,6 +56,31 @@ interface UpdatePositionsRequest {
 export function registerSignalingEvents(io: SocketIOServer, socket: Socket): void {
   let participantId = '';
 
+  // Проверяем, что функция вызывается
+  signalingLogger.log(`Registering mediasoup signaling events for socket: ${socket.id}`, {
+    socketId: socket.id, 
+    registeredEvents: Array.from(socket.eventNames())
+  }, true);
+  
+  // Явно проверяем, что наши обработчики регистрируются
+  socket.on('debug-events', (callback) => {
+    if (typeof callback === 'function') {
+      callback({
+        socketId: socket.id,
+        currentEvents: Array.from(socket.eventNames()),
+        participantId: participantId
+      });
+    }
+  });
+  
+  // Тестируем прослушивает ли сокет событие join-room
+  socket.on('test-join-room', (data, callback) => {
+    signalingLogger.log('Got test-join-room event', data, true);
+    if (typeof callback === 'function') {
+      callback({ success: true, message: 'join-room handler registered correctly' });
+    }
+  });
+
   // Handle connection
   signalingLogger.log(`New connection: ${socket.id}`);
   
