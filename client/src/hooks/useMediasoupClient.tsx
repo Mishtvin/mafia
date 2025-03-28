@@ -113,52 +113,75 @@ export function useMediasoupClient(): MediasoupResult {
         setTimeout(() => {
           debug('socket', `Joining room with userId: ${userId}, nickname: ${nickname}`);
           
-          // First join room via socket.io
-          newSocket.emit('joinRoom', { roomToken, userId, nickname }, () => {
-            debug('socket', `Joined room via Socket.IO: ${roomToken}`);
-            
-            // Then use the mediasoup signaling
-            debug('socket', 'Sending join-room request via mediasoup signaling');
-            newSocket.emit('join-room', { userId, nickname }, async (response: any) => {
-              debug('socket', 'Received join-room response', response);
-              
-              if (response && response.success) {
-                debug('socket', `Setting ${response.participants?.length || 0} participants`);
-                
-                // Debug the participant list we received before setting
-                debug('participants', 'Initial participants list:', 
-                  (response.participants || []).map((p: any) => ({ id: p.id, nickname: p.nickname }))
-                );
-                
-                // Set participants list, ensuring it's an array
-                setParticipants(response.participants || []);
-                
-                // Load device with router RTP capabilities
-                debug('socket', 'Requesting RTP capabilities');
-                newSocket.emit('get-rtp-capabilities', { userId }, async (response: any) => {
-                  debug('socket', 'Received RTP capabilities response', response);
-                  
-                  if (response && response.success) {
-                    try {
-                      debug('device', 'Loading device with RTP capabilities', response.rtpCapabilities);
-                      await state.device?.load({ routerRtpCapabilities: response.rtpCapabilities });
-                      setState(prev => ({ ...prev, connected: true }));
-                      debug('device', 'MediaSoup device loaded successfully');
-                    } catch (error) {
-                      debug('device', 'Failed to load device', error);
-                      setState(prev => ({ ...prev, error: 'Failed to initialize video system' }));
-                    }
-                  } else {
-                    debug('device', 'Failed to get RTP capabilities', response?.error || 'Unknown error');
-                    setState(prev => ({ ...prev, error: 'Failed to get streaming capabilities' }));
-                  }
-                });
-              } else {
-                debug('socket', 'Failed to join room', response?.error || 'Unknown error');
-                setState(prev => ({ ...prev, error: 'Failed to join room' }));
-              }
-            });
+          // First join room via socket.io, с обработкой ошибок и фолбеком на событие
+          const joinRoomRequest = { roomToken, userId, nickname };
+          
+          // Подписываемся на ответное событие для случая, если колбэк не сработает
+          newSocket.once('joinRoomResponse', (response: any) => {
+            debug('socket', `Received joinRoomResponse via event: ${JSON.stringify(response)}`);
+            handleJoinRoomResponse(response);
           });
+          
+          // Отправляем событие с обычным колбеком
+          newSocket.emit('joinRoom', joinRoomRequest, (response: any) => {
+            debug('socket', `Received joinRoom callback response: ${JSON.stringify(response)}`);
+            handleJoinRoomResponse(response);
+          });
+          
+          // Функция обработки ответа на joinRoom, чтобы не дублировать код
+          const handleJoinRoomResponse = (response: any) => {
+            if (response && response.success) {
+              debug('socket', `Joined room via Socket.IO: ${roomToken}`);
+              
+              // Отписываемся от ответного события, если уже получили ответ через колбэк
+              newSocket.off('joinRoomResponse');
+              
+              // Then use the mediasoup signaling
+              debug('socket', 'Sending join-room request via mediasoup signaling');
+              newSocket.emit('join-room', { userId, nickname }, async (response: any) => {
+                debug('socket', 'Received join-room response', response);
+                
+                if (response && response.success) {
+                  debug('socket', `Setting ${response.participants?.length || 0} participants`);
+                  
+                  // Debug the participant list we received before setting
+                  debug('participants', 'Initial participants list:', 
+                    (response.participants || []).map((p: any) => ({ id: p.id, nickname: p.nickname }))
+                  );
+                  
+                  // Set participants list, ensuring it's an array
+                  setParticipants(response.participants || []);
+                  
+                  // Load device with router RTP capabilities
+                  debug('socket', 'Requesting RTP capabilities');
+                  newSocket.emit('get-rtp-capabilities', { userId }, async (response: any) => {
+                    debug('socket', 'Received RTP capabilities response', response);
+                    
+                    if (response && response.success) {
+                      try {
+                        debug('device', 'Loading device with RTP capabilities', response.rtpCapabilities);
+                        await state.device?.load({ routerRtpCapabilities: response.rtpCapabilities });
+                        setState(prev => ({ ...prev, connected: true }));
+                        debug('device', 'MediaSoup device loaded successfully');
+                      } catch (error) {
+                        debug('device', 'Failed to load device', error);
+                        setState(prev => ({ ...prev, error: 'Failed to initialize video system' }));
+                      }
+                    } else {
+                      debug('device', 'Failed to get RTP capabilities', response?.error || 'Unknown error');
+                      setState(prev => ({ ...prev, error: 'Failed to get streaming capabilities' }));
+                    }
+                  });
+                } else {
+                  debug('socket', 'Failed to join room', response?.error || 'Unknown error');
+                  setState(prev => ({ ...prev, error: 'Failed to join room' }));
+                }
+              });
+            } else {
+              debug('socket', 'Failed to join room via Socket.IO', response?.error || 'Unknown error');
+              setState(prev => ({ ...prev, error: 'Failed to join Socket.IO room' }));
+            }
+          };
         }, 500); // Small delay to ensure socket connection is stable
       });
       
